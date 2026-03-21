@@ -1,0 +1,14 @@
+{
+  "permissions": {
+    "allow": [
+      "WebSearch",
+      "Bash(curl -L https://raw.githubusercontent.com/garrytan/gstack/main/README.md)",
+      "Bash(git clone:*)",
+      "Bash(ping:*)",
+      "Bash(./setup:*)",
+      "Bash(curl:*)",
+      "Bash(bash)",
+      "Bash(source:*)"
+    ]
+  }
+}
