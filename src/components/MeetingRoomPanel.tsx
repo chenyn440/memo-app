@@ -170,6 +170,7 @@ export function MeetingRoomPanel({
   const [chatInput, setChatInput] = useState('');
   const [chatMessages, setChatMessages] = useState<MeetingChatMessage[]>([]);
   const [selectedChatPeerId, setSelectedChatPeerId] = useState<string | null>(null);
+  const [unreadByPeer, setUnreadByPeer] = useState<Record<string, number>>({});
   const localVideoRef = useRef<HTMLVideoElement | null>(null);
   const localCanvasRef = useRef<HTMLCanvasElement | null>(null);
   const chatListRef = useRef<HTMLDivElement | null>(null);
@@ -549,6 +550,12 @@ export function MeetingRoomPanel({
           },
         ];
       });
+      if (selectedChatPeerId !== remotePeerId) {
+        setUnreadByPeer((prev) => ({
+          ...prev,
+          [remotePeerId]: (prev[remotePeerId] ?? 0) + 1,
+        }));
+      }
       showToast(`${senderName}：${text}`, 'info');
       return;
     }
@@ -959,6 +966,10 @@ export function MeetingRoomPanel({
     if (!selectedChatPeerId) return [];
     return chatMessages.filter((message) => message.peerId === selectedChatPeerId);
   }, [chatMessages, selectedChatPeerId]);
+  const unreadTotal = useMemo(
+    () => Object.values(unreadByPeer).reduce((acc, count) => acc + count, 0),
+    [unreadByPeer]
+  );
 
   useEffect(() => {
     if (!chatListRef.current) return;
@@ -991,6 +1002,16 @@ export function MeetingRoomPanel({
       setSelectedChatPeerId(null);
     }
   }, [participantItems, selectedChatPeerId]);
+
+  useEffect(() => {
+    if (!selectedChatPeerId) return;
+    setUnreadByPeer((prev) => {
+      if (!prev[selectedChatPeerId]) return prev;
+      const next = { ...prev };
+      delete next[selectedChatPeerId];
+      return next;
+    });
+  }, [selectedChatPeerId]);
 
   useEffect(() => {
     if (!focusedTileId) return;
@@ -1772,6 +1793,7 @@ export function MeetingRoomPanel({
             onClick={() => setParticipantDrawerOpen(true)}
           >
             参会人({participantItems.length})
+            {unreadTotal > 0 && <span className="meeting-unread-badge">{unreadTotal > 99 ? '99+' : unreadTotal}</span>}
           </button>
           <button className="meeting-room-info-toggle" onClick={() => void copyInviteInfo()}>
             复制会议链接
@@ -2103,6 +2125,12 @@ export function MeetingRoomPanel({
                         if (item.isSelf) return;
                         setSelectedChatPeerId(item.id);
                         setChatInput('');
+                        setUnreadByPeer((prev) => {
+                          if (!prev[item.id]) return prev;
+                          const next = { ...prev };
+                          delete next[item.id];
+                          return next;
+                        });
                       }}
                     >
                       <span className="meeting-participant-name">{item.name}</span>
@@ -2119,13 +2147,14 @@ export function MeetingRoomPanel({
                 <div className="meeting-participant-chat-head">
                   <button
                     type="button"
-                    className="meeting-room-info-toggle"
+                    className="meeting-room-info-toggle meeting-chat-back-btn"
                     onClick={() => {
                       setSelectedChatPeerId(null);
                       setChatInput('');
                     }}
                   >
-                    返回
+                    <span className="meeting-chat-back-arrow" aria-hidden="true">←</span>
+                    <span>返回</span>
                   </button>
                   <div className="meeting-participant-chat-title">{selectedChatPeerName}</div>
                 </div>
@@ -2186,6 +2215,12 @@ export function MeetingRoomPanel({
                         if (item.isSelf) return;
                         setSelectedChatPeerId(item.id);
                         setChatInput('');
+                        setUnreadByPeer((prev) => {
+                          if (!prev[item.id]) return prev;
+                          const next = { ...prev };
+                          delete next[item.id];
+                          return next;
+                        });
                       }}
                     >
                       <span className="meeting-participant-name">{item.name}</span>
@@ -2201,13 +2236,14 @@ export function MeetingRoomPanel({
                   <div className="meeting-participant-chat-head">
                     <button
                       type="button"
-                      className="meeting-room-info-toggle"
+                      className="meeting-room-info-toggle meeting-chat-back-btn"
                       onClick={() => {
                         setSelectedChatPeerId(null);
                         setChatInput('');
                       }}
                     >
-                      返回
+                      <span className="meeting-chat-back-arrow" aria-hidden="true">←</span>
+                      <span>返回</span>
                     </button>
                     <div className="meeting-participant-chat-title">{selectedChatPeerName}</div>
                   </div>

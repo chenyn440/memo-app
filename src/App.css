@@ -2934,6 +2934,19 @@ button:active {
   gap: 8px;
 }
 
+.meeting-chat-back-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding-left: 8px;
+  padding-right: 10px;
+}
+
+.meeting-chat-back-arrow {
+  font-size: 14px;
+  line-height: 1;
+}
+
 .meeting-participant-chat-list {
   flex: 1;
   min-height: 0;
@@ -2946,6 +2959,25 @@ button:active {
 
 .meeting-participants-toggle {
   display: none;
+  position: relative;
+  overflow: visible;
+}
+
+.meeting-unread-badge {
+  position: absolute;
+  top: -6px;
+  right: -6px;
+  min-width: 18px;
+  height: 18px;
+  padding: 0 5px;
+  border-radius: 999px;
+  border: 1px solid #fff;
+  background: #d44f4a;
+  color: #fff;
+  font-size: 10px;
+  font-weight: 700;
+  line-height: 16px;
+  text-align: center;
 }
 
 .meeting-participants-drawer-wrap {
