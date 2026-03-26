@@ -59,7 +59,6 @@ function WebPortalApp() {
   const [inviteText, setInviteText] = useState('');
   const [authEmail, setAuthEmail] = useState('');
   const [authCode, setAuthCode] = useState('');
-  const [webApiBase, setWebApiBase] = useState(() => api.getWebApiBaseUrl());
   const [authToken, setAuthToken] = useState(() => api.getWebAuthToken());
 
   const navigate = (nextPath: string) => {
@@ -132,12 +131,6 @@ function WebPortalApp() {
       showToast('请填写邮箱', 'error');
       return;
     }
-    const normalizedBase = webApiBase.trim();
-    if (!normalizedBase) {
-      showToast('请填写 Web API 地址', 'error');
-      return;
-    }
-    api.setWebApiBaseUrl(normalizedBase);
     try {
       await api.sendAuthCode(normalizedEmail);
       showToast('验证码已发送', 'success');
@@ -154,12 +147,6 @@ function WebPortalApp() {
       showToast('请填写邮箱和验证码', 'error');
       return;
     }
-    const normalizedBase = webApiBase.trim();
-    if (!normalizedBase) {
-      showToast('请填写 Web API 地址', 'error');
-      return;
-    }
-    api.setWebApiBaseUrl(normalizedBase);
     try {
       const data = await api.verifyAuthCode(normalizedEmail, normalizedCode);
       const token = data.access_token?.trim();
@@ -245,14 +232,6 @@ function WebPortalApp() {
         <div className="web-card web-card-wide">
           <h1>登录智能笔记</h1>
           <p>登录后可在 Web 端使用笔记与计划。</p>
-          <label className="web-field">
-            <span>Web API 地址</span>
-            <input
-              value={webApiBase}
-              onChange={(e) => setWebApiBase(e.target.value)}
-              placeholder="例如 https://api.aiyn.cloud"
-            />
-          </label>
           <label className="web-field">
             <span>邮箱</span>
             <input

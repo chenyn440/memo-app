@@ -78,6 +78,7 @@ const getWebApiBaseUrl = (): string => {
   if (fromStorage.trim()) return normalizeWebApiBaseUrl(fromStorage);
   const fromEnv = (import.meta as any)?.env?.VITE_WEB_API_BASE_URL ?? '';
   if (String(fromEnv).trim()) return normalizeWebApiBaseUrl(String(fromEnv));
+  if (window.location?.origin) return normalizeWebApiBaseUrl(window.location.origin);
   return normalizeWebApiBaseUrl(DEFAULT_WEB_API_BASE_URL);
 };
 

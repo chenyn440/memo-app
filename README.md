@@ -241,6 +241,25 @@ VITE_APP_DOWNLOAD_URL=https://your-download-page
 https://github.com/chenyongnuan/memo-app/releases
 ```
 
+## Web 数据架构（已定）
+
+当前数据层采用双轨方案，不做全量替换：
+
+- 桌面端（Tauri）：继续使用本地 SQLite（离线可用）
+- Web 端（云端）：使用 HTTP 业务 API + MySQL 8
+
+### MySQL 选型说明
+
+- 第一阶段采用**单机 MySQL 8**（安装在一台服务器）即可满足当前需求
+- 不要求首版上主从或分布式，先保障功能闭环与稳定性
+- 建议同机部署 Web API 与 MySQL（内网访问），降低网络复杂度
+
+### 最小运维建议（单机）
+
+- 开启每日自动备份（`mysqldump`）
+- 仅开放 MySQL 到应用内网，不对公网直接暴露
+- 设置基础监控：CPU、磁盘、连接数、慢查询日志
+
 ## 会议模块（2026-03-26 更新）
 
 ### 当前能力
