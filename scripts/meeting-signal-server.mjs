@@ -12,6 +12,7 @@ const tokens = new Map();
 
 const nowIso = () => new Date().toISOString();
 const randomToken = () => Math.random().toString(36).slice(2) + Date.now().toString(36);
+const normalizeBaseUrl = (baseUrl) => String(baseUrl || '').trim().replace(/\/+$/, '');
 
 const numericRoomId = (roomKey) => {
   const n = Number(roomKey);
@@ -47,10 +48,26 @@ const sendJson = (res, code, body) => {
   res.writeHead(code, {
     'access-control-allow-origin': '*',
     'access-control-allow-methods': 'GET,POST,DELETE,OPTIONS',
-    'access-control-allow-headers': 'content-type',
+    'access-control-allow-headers': 'content-type,authorization',
     'content-type': 'application/json; charset=utf-8',
   });
   res.end(payload);
+};
+
+const proxyJson = async (res, targetUrl, init) => {
+  try {
+    const upstream = await fetch(targetUrl, init);
+    const text = await upstream.text();
+    let payload = null;
+    try {
+      payload = text ? JSON.parse(text) : null;
+    } catch {
+      payload = { error: text || `upstream error(${upstream.status})` };
+    }
+    sendJson(res, upstream.status, payload);
+  } catch (error) {
+    sendJson(res, 502, { error: error?.message || 'upstream request failed' });
+  }
 };
 
 const readJsonBody = (req) => new Promise((resolve, reject) => {
@@ -136,6 +153,64 @@ const server = createServer(async (req, res) => {
     const accessToken = `demo_${randomToken()}`;
     tokens.set(accessToken, { account, created_at: nowIso() });
     sendJson(res, 200, { access_token: accessToken });
+    return;
+  }
+
+  if (pathname === '/v1/ai/chat' && req.method === 'POST') {
+    const body = await readJsonBody(req).catch(() => null);
+    if (!body) {
+      sendJson(res, 400, { error: 'invalid json' });
+      return;
+    }
+    const apiKey = String(body.api_key || '').trim();
+    const baseUrl = normalizeBaseUrl(body.base_url || 'https://open.bigmodel.cn/api/paas/v4');
+    const model = String(body.model || '').trim();
+    const messages = Array.isArray(body.messages) ? body.messages : [];
+    const temperature = Number.isFinite(Number(body.temperature)) ? Number(body.temperature) : 0.2;
+    if (!apiKey || !baseUrl || !model || messages.length === 0) {
+      sendJson(res, 400, { error: 'api_key, base_url, model and messages are required' });
+      return;
+    }
+    await proxyJson(res, `${baseUrl}/chat/completions`, {
+      method: 'POST',
+      headers: {
+        'content-type': 'application/json',
+        authorization: `Bearer ${apiKey}`,
+      },
+      body: JSON.stringify({
+        model,
+        messages,
+        temperature,
+      }),
+    });
+    return;
+  }
+
+  if (pathname === '/v1/ai/embeddings' && req.method === 'POST') {
+    const body = await readJsonBody(req).catch(() => null);
+    if (!body) {
+      sendJson(res, 400, { error: 'invalid json' });
+      return;
+    }
+    const apiKey = String(body.api_key || '').trim();
+    const baseUrl = normalizeBaseUrl(body.base_url || 'https://open.bigmodel.cn/api/paas/v4');
+    const model = String(body.model || '').trim();
+    const input = body.input;
+    if (!apiKey || !baseUrl || !model || (!Array.isArray(input) && typeof input !== 'string')) {
+      sendJson(res, 400, { error: 'api_key, base_url, model and input are required' });
+      return;
+    }
+    await proxyJson(res, `${baseUrl}/embeddings`, {
+      method: 'POST',
+      headers: {
+        'content-type': 'application/json',
+        authorization: `Bearer ${apiKey}`,
+      },
+      body: JSON.stringify({
+        model,
+        input,
+      }),
+    });
     return;
   }
 

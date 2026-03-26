@@ -89,6 +89,75 @@ const RAG_PROMPT = `
 回答：
 `;
 
+function isTauriRuntime(): boolean {
+  if (typeof window === "undefined") return false;
+  return Boolean((window as any).__TAURI_INTERNALS__ || (window as any).__TAURI__);
+}
+
+function normalizeBaseUrl(baseUrl: string): string {
+  return String(baseUrl || "").trim().replace(/\/+$/, "");
+}
+
+async function proxyChatCompletion(params: {
+  apiKey: string;
+  baseUrl: string;
+  model: string;
+  messages: Array<{ role: "system" | "user" | "assistant"; content: string }>;
+  temperature?: number;
+}): Promise<string> {
+  const response = await fetch("/v1/ai/chat", {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({
+      api_key: params.apiKey,
+      base_url: normalizeBaseUrl(params.baseUrl),
+      model: params.model,
+      messages: params.messages,
+      temperature: params.temperature ?? 0.2,
+    }),
+  });
+  if (!response.ok) {
+    const text = await response.text().catch(() => "");
+    throw new Error(text || `AI 代理请求失败(${response.status})`);
+  }
+  const data = await response.json() as any;
+  const raw = data?.choices?.[0]?.message?.content;
+  if (typeof raw === "string") return raw.trim();
+  if (Array.isArray(raw)) {
+    const merged = raw.map((item: any) => (typeof item?.text === "string" ? item.text : "")).join("");
+    return merged.trim();
+  }
+  throw new Error("AI 返回内容为空");
+}
+
+async function proxyEmbeddings(params: {
+  apiKey: string;
+  baseUrl: string;
+  model: string;
+  input: string | string[];
+}): Promise<number[][]> {
+  const response = await fetch("/v1/ai/embeddings", {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({
+      api_key: params.apiKey,
+      base_url: normalizeBaseUrl(params.baseUrl),
+      model: params.model,
+      input: params.input,
+    }),
+  });
+  if (!response.ok) {
+    const text = await response.text().catch(() => "");
+    throw new Error(text || `Embedding 代理请求失败(${response.status})`);
+  }
+  const data = await response.json() as any;
+  const vectors = Array.isArray(data?.data) ? data.data.map((item: any) => item?.embedding || []) : [];
+  if (!vectors.length) {
+    throw new Error("Embedding 返回为空");
+  }
+  return vectors as number[][];
+}
+
 function normalize(text: string): string {
   return text.replace(/\s+/g, " ").trim();
 }
@@ -160,6 +229,16 @@ export const aiService = {
     }
 
     try {
+      if (!isTauriRuntime()) {
+        const result = await proxyChatCompletion({
+          apiKey: config.apiKey,
+          baseUrl: config.baseUrl,
+          model: config.model,
+          temperature: 0.3,
+          messages: [{ role: "user", content: SUMMARY_PROMPT.replace("{content}", content) }],
+        });
+        return result.trim();
+      }
       const llm = new ChatOpenAI({
         apiKey: config.apiKey,
         configuration: {
@@ -187,6 +266,16 @@ export const aiService = {
     if (!config.apiKey || !content.trim()) return content;
     
     try {
+      if (!isTauriRuntime()) {
+        const result = await proxyChatCompletion({
+          apiKey: config.apiKey,
+          baseUrl: config.baseUrl,
+          model: config.model,
+          temperature: 0.1,
+          messages: [{ role: "user", content: POLISH_PROMPT.replace("{content}", content) }],
+        });
+        return result.trim();
+      }
       const llm = new ChatOpenAI({
         apiKey: config.apiKey,
         configuration: {
@@ -219,6 +308,19 @@ export const aiService = {
     }
 
     try {
+      if (!isTauriRuntime()) {
+        const promptText = TRANSLATE_PROMPT
+          .replace("{targetLanguage}", targetLanguage)
+          .replace("{content}", content);
+        const result = await proxyChatCompletion({
+          apiKey: config.apiKey,
+          baseUrl: config.baseUrl,
+          model: config.model,
+          temperature: 0.1,
+          messages: [{ role: "user", content: promptText }],
+        });
+        return result.trim();
+      }
       const llm = new ChatOpenAI({
         apiKey: config.apiKey,
         configuration: {
@@ -272,14 +374,23 @@ export const aiService = {
       }
       if (embeddingAvailable) {
         try {
-          const embeddingClient = new OpenAIEmbeddings({
-            apiKey: config.apiKey,
-            model: embeddingModel,
-            configuration: {
-              baseURL: config.baseUrl,
-            },
-          });
-          cachedEmbeddings = await embeddingClient.embedDocuments(cachedChunks.map((c) => c.text));
+          if (isTauriRuntime()) {
+            const embeddingClient = new OpenAIEmbeddings({
+              apiKey: config.apiKey,
+              model: embeddingModel,
+              configuration: {
+                baseURL: config.baseUrl,
+              },
+            });
+            cachedEmbeddings = await embeddingClient.embedDocuments(cachedChunks.map((c) => c.text));
+          } else {
+            cachedEmbeddings = await proxyEmbeddings({
+              apiKey: config.apiKey,
+              baseUrl: config.baseUrl,
+              model: embeddingModel,
+              input: cachedChunks.map((c) => c.text),
+            });
+          }
         } catch (error) {
           console.warn("Embedding unavailable, fallback to lexical retrieval:", error);
           embeddingAvailable = false;
@@ -294,14 +405,24 @@ export const aiService = {
     let queryEmbedding: number[] = [];
     if (embeddingAvailable && cachedEmbeddings.length > 0) {
       try {
-        const embeddingClient = new OpenAIEmbeddings({
-          apiKey: config.apiKey,
-          model: embeddingModel,
-          configuration: {
-            baseURL: config.baseUrl,
-          },
-        });
-        queryEmbedding = await embeddingClient.embedQuery(query);
+        if (isTauriRuntime()) {
+          const embeddingClient = new OpenAIEmbeddings({
+            apiKey: config.apiKey,
+            model: embeddingModel,
+            configuration: {
+              baseURL: config.baseUrl,
+            },
+          });
+          queryEmbedding = await embeddingClient.embedQuery(query);
+        } else {
+          const vectors = await proxyEmbeddings({
+            apiKey: config.apiKey,
+            baseUrl: config.baseUrl,
+            model: embeddingModel,
+            input: query,
+          });
+          queryEmbedding = vectors[0] || [];
+        }
       } catch (error) {
         console.warn("Embedding query failed, fallback to lexical retrieval:", error);
         embeddingAvailable = false;
@@ -336,18 +457,32 @@ export const aiService = {
       .map((c) => `[${c.index}] ${c.noteTitle}\n${c.snippet}`)
       .join("\n\n");
 
-    const llm = new ChatOpenAI({
-      apiKey: config.apiKey,
-      configuration: {
-        baseURL: config.baseUrl,
-      },
-      modelName: config.model,
-      temperature: 0.2,
-    });
+    let answer = "";
+    if (isTauriRuntime()) {
+      const llm = new ChatOpenAI({
+        apiKey: config.apiKey,
+        configuration: {
+          baseURL: config.baseUrl,
+        },
+        modelName: config.model,
+        temperature: 0.2,
+      });
 
-    const prompt = PromptTemplate.fromTemplate(RAG_PROMPT);
-    const chain = prompt.pipe(llm).pipe(new StringOutputParser());
-    const answer = await chain.invoke({ question: query, context });
+      const prompt = PromptTemplate.fromTemplate(RAG_PROMPT);
+      const chain = prompt.pipe(llm).pipe(new StringOutputParser());
+      answer = await chain.invoke({ question: query, context });
+    } else {
+      const promptText = RAG_PROMPT
+        .replace("{question}", query)
+        .replace("{context}", context);
+      answer = await proxyChatCompletion({
+        apiKey: config.apiKey,
+        baseUrl: config.baseUrl,
+        model: config.model,
+        temperature: 0.2,
+        messages: [{ role: "user", content: promptText }],
+      });
+    }
 
     return {
       answer: answer.trim(),
