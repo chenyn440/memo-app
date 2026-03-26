@@ -1970,8 +1970,7 @@ export function MeetingRoomPanel({
                 className={`meeting-video-tile meeting-video-tile-local ${enableTileFocus ? 'meeting-video-tile-interactive' : ''} ${focusedTileId === 'local' ? 'focused' : ''} ${hasFocusedTile && focusedTileId !== 'local' ? 'dimmed' : ''}`}
                 data-audio-level={Math.round(localAudioLevel * 100)}
                 onClick={enableTileFocus ? (() => setFocusedTileId((prev) => (prev === 'local' ? null : 'local'))) : undefined}
-                onDoubleClick={enableTileFocus ? ((e) => requestTileFullscreen(e.target)) : undefined}
-                title={enableTileFocus ? '点击聚焦，双击全屏' : '双人会议布局'}
+                title={enableTileFocus ? '点击聚焦' : '双人会议布局'}
               >
                 <video ref={localVideoRef} autoPlay playsInline muted className="meeting-local-video-source" />
                 <canvas
@@ -2002,8 +2001,7 @@ export function MeetingRoomPanel({
                     key={peer.peer_id}
                     className={`meeting-video-tile meeting-video-tile-remote ${enableTileFocus ? 'meeting-video-tile-interactive' : ''} ${focusedTileId === tileId ? 'focused' : ''} ${hasFocusedTile && focusedTileId !== tileId ? 'dimmed' : ''} ${isSpeaking ? 'speaking' : ''}`}
                     onClick={enableTileFocus ? (() => setFocusedTileId((prev) => (prev === tileId ? null : tileId))) : undefined}
-                    onDoubleClick={enableTileFocus ? ((e) => requestTileFullscreen(e.target)) : undefined}
-                    title={enableTileFocus ? '点击聚焦，双击全屏' : '双人会议布局'}
+                    title={enableTileFocus ? '点击聚焦' : '双人会议布局'}
                   >
                     {stream ? (
                       <video
