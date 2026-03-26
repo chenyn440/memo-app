@@ -184,13 +184,6 @@ function WebPortalApp() {
     }
   };
 
-  const logout = () => {
-    api.logoutWeb();
-    setAuthToken('');
-    setAuthPassword('');
-    navigate('/login');
-  };
-
   const leaveMeeting = () => {
     sessionStorage.removeItem(WEB_MEETING_SESSION_KEY);
     navigate('/join');
@@ -236,15 +229,7 @@ function WebPortalApp() {
         </div>
       );
     }
-    return (
-      <>
-        <DesktopApp />
-        <div style={{ position: 'fixed', right: 14, top: 12, zIndex: 99, display: 'flex', gap: 8 }}>
-          <button className="web-secondary-btn" onClick={() => navigate('/join')}>会议</button>
-          <button className="web-secondary-btn" onClick={logout}>退出</button>
-        </div>
-      </>
-    );
+    return <DesktopApp />;
   }
 
   if (path === '/login') {
