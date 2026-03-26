@@ -1,5 +1,6 @@
 import { forwardRef, useCallback, useEffect, useImperativeHandle, useRef, useState } from 'react';
 import { save } from '@tauri-apps/plugin-dialog';
+import { listen, type UnlistenFn } from '@tauri-apps/api/event';
 import { EditorContent, useEditor } from '@tiptap/react';
 import StarterKit from '@tiptap/starter-kit';
 import { Table } from '@tiptap/extension-table';
@@ -166,8 +167,7 @@ export const NoteEditor = forwardRef<NoteEditorHandle, NoteEditorProps>(function
   const webSpeechLastFinalRef = useRef('');
   const webSpeechPendingInterimRef = useRef('');
   const webSpeechInterimTimerRef = useRef<number | null>(null);
-  const speechInsertQueueRef = useRef<Promise<void>>(Promise.resolve());
-  const speechRawFallbackNotifiedRef = useRef(false);
+  const speechCommitQueueRef = useRef<Promise<void>>(Promise.resolve());
   const { aiConfig, setAIConfig, currentLanguage, setCurrentLanguage, setSelectedNote } = useStore();
   const tauriRuntime = api.isTauriRuntime();
   const webSpeechCtor = tauriRuntime ? null : getWebSpeechRecognitionCtor();
@@ -481,32 +481,18 @@ export const NoteEditor = forwardRef<NoteEditorHandle, NoteEditorProps>(function
     if (!editor) throw new Error('编辑器未就绪');
     stopWebSpeech();
     const recognition = new webSpeechCtor();
-    recognition.lang = 'zh-CN';
+    recognition.lang = (navigator.language || 'zh-CN').toLowerCase().startsWith('zh')
+      ? 'zh-CN'
+      : (navigator.language || 'en-US');
     recognition.continuous = true;
     recognition.interimResults = true;
-    recognition.maxAlternatives = 1;
+    recognition.maxAlternatives = 3;
     const commitText = (raw: string) => {
       const text = String(raw || '').trim();
       if (!text) return;
       if (text === webSpeechLastFinalRef.current) return;
       webSpeechLastFinalRef.current = text;
-      speechInsertQueueRef.current = speechInsertQueueRef.current.then(async () => {
-        let output = text;
-        if (aiConfig.apiKey?.trim()) {
-          try {
-            const polished = await aiService.polishSpeech(text, aiConfig);
-            output = polished?.trim() || text;
-          } catch {
-            output = text;
-          }
-        } else if (!speechRawFallbackNotifiedRef.current) {
-          speechRawFallbackNotifiedRef.current = true;
-          showToast('未配置 API Key，语音内容将直接写入', 'info');
-        }
-        if (output.trim()) {
-          editor.chain().focus().insertContent(output).run();
-        }
-      });
+      editor.chain().focus().insertContent(text).run();
     };
     const scheduleInterimCommit = (raw: string) => {
       const text = String(raw || '').trim();
@@ -521,7 +507,7 @@ export const NoteEditor = forwardRef<NoteEditorHandle, NoteEditorProps>(function
           webSpeechPendingInterimRef.current = '';
         }
         webSpeechInterimTimerRef.current = null;
-      }, 1200);
+      }, 700);
     };
     recognition.onresult = (event: any) => {
       let finalText = '';
@@ -577,9 +563,27 @@ export const NoteEditor = forwardRef<NoteEditorHandle, NoteEditorProps>(function
     webSpeechRecognitionRef.current = recognition;
     webSpeechLastFinalRef.current = '';
     webSpeechPendingInterimRef.current = '';
-    speechRawFallbackNotifiedRef.current = false;
     setIsListening(true);
-  }, [aiConfig, editor, stopWebSpeech, webSpeechCtor]);
+  }, [editor, stopWebSpeech, webSpeechCtor]);
+
+  const commitSpeechText = useCallback((raw: string, shouldPolish: boolean) => {
+    const text = String(raw || '').trim();
+    if (!text || !editor) return;
+    speechCommitQueueRef.current = speechCommitQueueRef.current.then(async () => {
+      let output = text;
+      if (shouldPolish && aiConfig.apiKey?.trim()) {
+        try {
+          const polished = await aiService.polishSpeech(text, aiConfig);
+          output = polished?.trim() || text;
+        } catch {
+          output = text;
+        }
+      }
+      if (output.trim()) {
+        editor.chain().focus().insertContent(output).run();
+      }
+    });
+  }, [aiConfig, editor]);
 
   const toggleSpeech = async () => {
     if (!speechSupported) { showToast('当前环境不支持语音输入', 'info'); return; }
@@ -618,6 +622,37 @@ export const NoteEditor = forwardRef<NoteEditorHandle, NoteEditorProps>(function
       stopWebSpeech();
     }
   }, [stopWebSpeech, tauriRuntime]);
+
+  useEffect(() => {
+    if (!tauriRuntime || !isListening) return;
+    let disposed = false;
+    const unlisteners: UnlistenFn[] = [];
+    const setup = async () => {
+      const unlistenFinal = await listen<string>('speech-final', (event) => {
+        if (disposed) return;
+        commitSpeechText(event.payload, true);
+      });
+      unlisteners.push(unlistenFinal);
+
+      const unlistenStopped = await listen('speech-stopped', () => {
+        if (disposed) return;
+        setIsListening(false);
+      });
+      unlisteners.push(unlistenStopped);
+    };
+    void setup();
+
+    return () => {
+      disposed = true;
+      unlisteners.forEach((fn) => {
+        try {
+          fn();
+        } catch {
+          // ignore
+        }
+      });
+    };
+  }, [commitSpeechText, isListening, tauriRuntime]);
 
   const handleFolderChange = async (folderIdValue: string) => {
     if (!note) return;

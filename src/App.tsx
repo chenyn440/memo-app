@@ -79,6 +79,43 @@ function WebPortalApp() {
   }, []);
 
   useEffect(() => {
+    const setDescription = (content: string) => {
+      let meta = document.querySelector('meta[name="description"]') as HTMLMetaElement | null;
+      if (!meta) {
+        meta = document.createElement('meta');
+        meta.setAttribute('name', 'description');
+        document.head.appendChild(meta);
+      }
+      meta.setAttribute('content', content);
+    };
+
+    if (path === '/login') {
+      document.title = '登录智能笔记 | Web 工作台';
+      setDescription('登录智能笔记 Web 工作台，使用笔记、计划、AI 问答与会议协作功能。');
+      return;
+    }
+    if (path === '/app') {
+      document.title = '智能笔记工作台 | 笔记与计划管理';
+      setDescription('在智能笔记工作台中进行笔记编辑、计划管理、AI 总结翻译与全文问答。');
+      return;
+    }
+    if (path === '/join') {
+      document.title = '加入会议 | 智能笔记';
+      setDescription('通过网页快速加入智能笔记会议，支持多人实时音视频沟通与协作。');
+      return;
+    }
+    if (path === '/meeting') {
+      document.title = '会议中 | 智能笔记';
+      setDescription('智能笔记网页会议进行中，支持音视频、聊天与协作信息同步。');
+      return;
+    }
+    document.title = authToken
+      ? '智能笔记 | 进入工作台与会议协作'
+      : '智能笔记 | AI 笔记、计划与会议协作平台';
+    setDescription('智能笔记支持 AI 笔记整理、计划管理、笔记问答（RAG）和网页会议协作。');
+  }, [authToken, path]);
+
+  useEffect(() => {
     if (path !== '/join') return;
     const params = new URLSearchParams(window.location.search);
     const roomFromQuery = params.get('room')?.trim();
