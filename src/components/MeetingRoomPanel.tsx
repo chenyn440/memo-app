@@ -51,6 +51,7 @@ interface ParticipantListItem {
   id: string;
   name: string;
   status: 'online' | 'offline';
+  isSelf: boolean;
 }
 
 const BEAUTY_STORAGE_KEY = 'meeting_beauty_v1';
@@ -167,6 +168,7 @@ export function MeetingRoomPanel({
   const [mediaError, setMediaError] = useState<string | null>(null);
   const [chatInput, setChatInput] = useState('');
   const [chatMessages, setChatMessages] = useState<MeetingChatMessage[]>([]);
+  const [selectedChatPeerId, setSelectedChatPeerId] = useState<string | null>(null);
   const localVideoRef = useRef<HTMLVideoElement | null>(null);
   const localCanvasRef = useRef<HTMLCanvasElement | null>(null);
   const chatListRef = useRef<HTMLDivElement | null>(null);
@@ -545,6 +547,7 @@ export function MeetingRoomPanel({
           },
         ];
       });
+      showToast(`${senderName}：${text}`, 'info');
       return;
     }
 
@@ -588,14 +591,24 @@ export function MeetingRoomPanel({
   const sendChatMessage = async () => {
     const text = chatInput.trim();
     if (!text) return;
-    const remotePeers = meetingPeers.filter((peer) => peer.peer_id !== localPeerIdRef.current);
-    if (remotePeers.length === 0) {
+    const targetPeer = selectedChatPeerId
+      ? meetingPeers.find((peer) => peer.peer_id === selectedChatPeerId)
+      : null;
+    if (selectedChatPeerId && !targetPeer) {
+      showToast('目标参会人已离线', 'info');
+      setSelectedChatPeerId(null);
+      return;
+    }
+    const receivers = targetPeer
+      ? [targetPeer]
+      : meetingPeers.filter((peer) => peer.peer_id !== localPeerIdRef.current);
+    if (receivers.length === 0) {
       showToast('当前没有在线对方，消息暂未发送', 'info');
       return;
     }
     const senderName = userName.trim() || '我';
     const createdAt = new Date().toISOString();
-    const payload = { text, senderName, createdAt };
+    const payload = { text, senderName, createdAt, toPeerId: targetPeer?.peer_id ?? null };
     setChatMessages((prev) => [
       ...prev,
       {
@@ -607,12 +620,13 @@ export function MeetingRoomPanel({
       },
     ]);
     setChatInput('');
-    const tasks = remotePeers.map((peer) =>
+    const tasks = receivers.map((peer) =>
       publishSignal(peer.peer_id, 'chat', payload).catch((error) => {
         console.warn('Failed to send chat signal:', error);
       })
     );
     await Promise.all(tasks);
+    showToast(targetPeer ? `已发送给 ${targetPeer.user_name}` : '消息已发送', 'success');
   };
 
   useEffect(() => {
@@ -902,7 +916,7 @@ export function MeetingRoomPanel({
   const localDisplayName = (userName.trim() || '我').slice(0, 1).toUpperCase();
   const hasFocusedTile = Boolean(focusedTileId);
   const isTwoPersonLayout = false;
-  const enableTileFocus = !isTwoPersonLayout;
+  const enableTileFocus = false;
   const activeSpeakerName = useMemo(() => {
     if (!activeSpeakerPeerId) {
       if (localSpeaking) return userName.trim() || '我';
@@ -928,6 +942,7 @@ export function MeetingRoomPanel({
         id: peer.peer_id,
         name: peer.peer_id === localPeerIdRef.current ? `我（${name}）` : name,
         status: 'online',
+        isSelf: peer.peer_id === localPeerIdRef.current,
       });
     });
     if (!map.has(localPeerIdRef.current)) {
@@ -936,10 +951,15 @@ export function MeetingRoomPanel({
         id: localPeerIdRef.current,
         name: `我（${localName}）`,
         status: 'online',
+        isSelf: true,
       });
     }
     return Array.from(map.values());
   }, [meetingPeers, userName]);
+  const selectedChatPeerName = useMemo(() => {
+    if (!selectedChatPeerId) return null;
+    return participantItems.find((item) => item.id === selectedChatPeerId)?.name ?? null;
+  }, [participantItems, selectedChatPeerId]);
 
   useEffect(() => {
     if (!chatListRef.current) return;
@@ -964,6 +984,14 @@ export function MeetingRoomPanel({
       setFocusedTileId(null);
     }
   }, [isTwoPersonLayout, focusedTileId]);
+
+  useEffect(() => {
+    if (!selectedChatPeerId) return;
+    const exists = participantItems.some((item) => item.id === selectedChatPeerId && !item.isSelf);
+    if (!exists) {
+      setSelectedChatPeerId(null);
+    }
+  }, [participantItems, selectedChatPeerId]);
 
   useEffect(() => {
     if (!focusedTileId) return;
