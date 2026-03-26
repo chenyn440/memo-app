@@ -267,6 +267,31 @@ sudo bash scripts/setup-meeting-signal-tencent.sh \
 - `scripts/meeting-signal.service.template`
 - `scripts/setup-meeting-signal-tencent.sh`
 
+## 腾讯云 PM2 启动脚本
+
+如果你希望用 PM2 托管会议信令服务（而不是 systemd 单服务），可以使用：
+
+```bash
+sudo bash scripts/setup-meeting-signal-pm2-tencent.sh \
+  --domain meet.example.com \
+  --project-dir /opt/memo-app \
+  --run-user root \
+  --signal-port 8787
+```
+
+该脚本会自动：
+
+- 安装 Nginx
+- 安装 Node 生产依赖与 PM2
+- 生成并启动 PM2 应用（`meeting-signal`）
+- 保存 PM2 进程并配置开机自启
+- 写入 Nginx 反代并重载
+
+相关文件：
+
+- `scripts/meeting-signal.pm2.config.template.cjs`
+- `scripts/setup-meeting-signal-pm2-tencent.sh`
+
 ## 正式打包（macOS + Windows）
 
 仓库内置 GitHub Actions 工作流：`.github/workflows/release-bundles.yml`
