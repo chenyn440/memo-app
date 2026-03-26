@@ -2733,6 +2733,35 @@ button:active {
   font-size: 22px;
 }
 
+.meeting-room-title-row {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 10px;
+  min-width: 0;
+}
+
+.meeting-room-code-inline {
+  font-size: 16px;
+  color: var(--color-text-secondary);
+  white-space: nowrap;
+}
+
+.meeting-room-header-tools {
+  margin-left: auto;
+  display: inline-flex;
+  align-items: center;
+  position: relative;
+  z-index: 8;
+}
+
+.meeting-room-info-popover {
+  position: absolute;
+  top: calc(100% + 8px);
+  right: 0;
+  width: 340px;
+  max-width: min(92vw, 340px);
+}
+
 .meeting-room-meta {
   margin-top: 6px;
   display: flex;
@@ -2792,6 +2821,13 @@ button:active {
   border: 1px solid var(--color-border-light);
   border-radius: var(--radius-lg);
   background: var(--color-surface);
+}
+
+.meeting-control-tail {
+  margin-left: auto;
+  display: inline-flex;
+  gap: 8px;
+  align-items: center;
 }
 
 .meeting-control-btn {
@@ -2908,14 +2944,29 @@ button:active {
 }
 
 .meeting-room-video-grid {
+  --meeting-tile-min-width: 220px;
+  --meeting-tile-width: clamp(220px, 24vw, 320px);
   display: grid;
-  grid-template-columns: 1fr 1fr;
+  grid-template-columns: repeat(auto-fill, minmax(var(--meeting-tile-min-width), var(--meeting-tile-width)));
+  justify-content: flex-start;
+  align-content: flex-start;
   gap: 10px;
   padding: 10px;
   min-height: 420px;
   border: 1px solid var(--color-border-light);
   border-radius: var(--radius-lg);
   background: var(--color-sidebar);
+}
+
+.meeting-room-video-grid.single-tile {
+  grid-template-columns: minmax(0, 1fr);
+  justify-content: stretch;
+}
+
+.meeting-room-video-grid.single-tile .meeting-video-tile {
+  aspect-ratio: 16 / 9;
+  width: min(100%, 460px);
+  justify-self: start;
 }
 
 .meeting-room-video-grid.two-person-layout {
@@ -3205,7 +3256,8 @@ button:active {
   border: 1px solid var(--color-border);
   border-radius: var(--radius-md);
   background: var(--color-surface);
-  min-height: 150px;
+  min-height: 0;
+  aspect-ratio: 1 / 1;
   display: flex;
   align-items: center;
   justify-content: center;
@@ -3225,7 +3277,8 @@ button:active {
 
 .meeting-video-tile.focused {
   grid-column: 1 / -1;
-  min-height: 340px;
+  min-height: 0;
+  aspect-ratio: 1 / 1;
   box-shadow: 0 12px 26px rgba(18, 22, 30, 0.22);
 }
 
@@ -3353,6 +3406,34 @@ button:active {
   color: rgba(244, 237, 232, 0.92);
 }
 
+.meeting-local-canvas-actions {
+  position: absolute;
+  right: 10px;
+  bottom: 10px;
+  display: inline-flex;
+  gap: 8px;
+  z-index: 3;
+}
+
+.meeting-local-canvas-action {
+  width: 30px;
+  height: 30px;
+  border: 1px solid rgba(255, 255, 255, 0.42);
+  border-radius: 999px;
+  background: rgba(0, 0, 0, 0.5);
+  color: #fff;
+  font-size: 14px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+}
+
+.meeting-local-canvas-action.off {
+  border-color: rgba(255, 130, 130, 0.68);
+  background: rgba(167, 40, 40, 0.55);
+}
+
 .meeting-video-tile-label {
   position: absolute;
   left: 8px;
@@ -3464,6 +3545,10 @@ button:active {
   background: var(--color-error-light);
   color: var(--color-error);
   font-size: 12px;
+}
+
+.meeting-room-body > .meeting-room-media-error {
+  margin: 10px 2px 0;
 }
 
 .meeting-room-token-label {
@@ -3594,7 +3679,11 @@ button:active {
   }
 
   .meeting-room-video-grid {
-    grid-template-columns: 1fr;
+    --meeting-tile-min-width: 200px;
+    --meeting-tile-width: clamp(200px, 30vw, 280px);
+    grid-template-columns: repeat(auto-fill, minmax(var(--meeting-tile-min-width), var(--meeting-tile-width)));
+    justify-content: flex-start;
+    align-content: flex-start;
     min-height: 360px;
   }
 
@@ -3709,13 +3798,22 @@ button:active {
     font-size: 12px;
   }
 
+  .meeting-control-tail {
+    width: 100%;
+    justify-content: flex-end;
+  }
+
   .meeting-room-video-grid {
+    --meeting-tile-min-width: 180px;
+    --meeting-tile-width: clamp(180px, 44vw, 220px);
     padding: 8px;
     gap: 8px;
+    grid-template-columns: repeat(auto-fill, minmax(var(--meeting-tile-min-width), var(--meeting-tile-width)));
+    justify-content: center;
   }
 
   .meeting-video-tile.focused {
-    min-height: 260px;
+    min-height: 0;
   }
 
   .meeting-room-video-grid.two-person-layout {

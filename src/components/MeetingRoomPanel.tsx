@@ -113,7 +113,6 @@ const BEAUTY_PRESET_LABEL: Record<BeautyPreset, string> = {
 export function MeetingRoomPanel({
   mode = 'desktop',
   room,
-  token,
   onBack,
   onEnd,
   onLeave,
@@ -150,11 +149,9 @@ export function MeetingRoomPanel({
   const [refreshing, setRefreshing] = useState(false);
   const [audioUnlockNeeded, setAudioUnlockNeeded] = useState(false);
   const [cameraSwitching, setCameraSwitching] = useState(false);
-  const [infoCollapsed, setInfoCollapsed] = useState(false);
   const [signalRoomKey, setSignalRoomKey] = useState(
     webSession?.roomKey || room?.room_code || String(room?.id ?? 'web-room')
   );
-  const [inviteRawText, setInviteRawText] = useState('');
   const [beautyTabOpen, setBeautyTabOpen] = useState(false);
   const [beautyPreset, setBeautyPreset] = useState<BeautyPreset | null>('standard');
   const [beautyTuning, setBeautyTuning] = useState<BeautyTuning>(BEAUTY_PRESET_TUNING.standard);
@@ -371,13 +368,6 @@ export function MeetingRoomPanel({
   };
   const signalingRoomIdOrKey: string = signalRoomKey.trim() || currentRoom.room_code || String(currentRoom.id);
 
-  const saveSignalRoomConfig = () => {
-    const normalizedRoomKey = signalRoomKey.trim() || currentRoom.room_code || String(currentRoom.id);
-    setSignalRoomKey(normalizedRoomKey);
-    localStorage.setItem(SIGNAL_ROOM_KEY_STORAGE_KEY, normalizedRoomKey);
-    showToast('房间标识已保存', 'success');
-  };
-
   const copyInviteInfo = async () => {
     const roomKey = signalRoomKey.trim() || currentRoom.room_code || String(currentRoom.id);
     const joinUrl = `${FIXED_WEB_JOIN_BASE_URL.replace(/\/+$/, '')}/join?room=${encodeURIComponent(roomKey)}`;
@@ -399,40 +389,6 @@ export function MeetingRoomPanel({
       console.error('Failed to copy invite info:', error);
       showToast('复制失败，请手动复制', 'error');
     }
-  };
-
-  const importInviteInfo = () => {
-    const raw = inviteRawText.trim();
-    if (!raw) {
-      showToast('请先粘贴邀请内容', 'error');
-      return;
-    }
-    const joinLinkMatch = raw.match(/https?:\/\/[^\s]+\/join\?[^\s]+/);
-    if (joinLinkMatch?.[0]) {
-      try {
-        const url = new URL(joinLinkMatch[0]);
-        const fromLink = url.searchParams.get('room')?.trim();
-        if (fromLink) {
-          setSignalRoomKey(fromLink);
-          localStorage.setItem(SIGNAL_ROOM_KEY_STORAGE_KEY, fromLink);
-          setInviteRawText('');
-          showToast('已从链接导入房间标识', 'success');
-          return;
-        }
-      } catch {
-        // ignore and fallback to text parsing
-      }
-    }
-    const roomKeyMatch = raw.match(/房间标识[：:]\s*([^\n\r]+)/);
-    const roomKey = roomKeyMatch?.[1]?.trim();
-    if (!roomKey) {
-      showToast('未识别到房间标识，请检查邀请内容', 'error');
-      return;
-    }
-    setSignalRoomKey(roomKey);
-    localStorage.setItem(SIGNAL_ROOM_KEY_STORAGE_KEY, roomKey);
-    setInviteRawText('');
-    showToast('邀请导入成功，已填入房间标识', 'success');
   };
 
   const publishSignal = async (
@@ -952,7 +908,7 @@ export function MeetingRoomPanel({
   const onlineCount = isWebMode ? (remotePeerTiles.length + 1) : participants.length;
   const localDisplayName = (userName.trim() || '我').slice(0, 1).toUpperCase();
   const hasFocusedTile = Boolean(focusedTileId);
-  const isTwoPersonLayout = remotePeerTiles.length === 1 && !hasFocusedTile;
+  const isTwoPersonLayout = false;
   const enableTileFocus = !isTwoPersonLayout;
   const activeSpeakerName = useMemo(() => {
     if (!activeSpeakerPeerId) {
@@ -971,7 +927,6 @@ export function MeetingRoomPanel({
     ? `${lastChatMessage.senderName}：${lastChatMessage.text}`
     : '暂无聊天内容，开始讨论后这里会展示最近消息。';
   const stageStatusLine = `在线 ${onlineCount} 人 · 信令${rtcSyncState === 'ok' ? '正常' : rtcSyncState === 'syncing' ? '同步中' : '重试中'} · 时长 ${elapsedLabel}`;
-  const showMeetingAdminPanel = !isWebMode;
 
   useEffect(() => {
     if (!chatListRef.current) return;
@@ -1187,6 +1142,45 @@ export function MeetingRoomPanel({
       showToast('刷新会议状态失败', 'error');
     } finally {
       setRefreshing(false);
+    }
+  };
+
+  const toggleMic = async () => {
+    const next = !micEnabled;
+    setMicEnabled(next);
+    await ensureMicState(next).catch((error) => {
+      console.error('Failed to toggle microphone:', error);
+      showToast('切换麦克风失败，请检查权限', 'error');
+      setMicEnabled(!next);
+    });
+  };
+
+  const toggleCamera = async () => {
+    const next = !cameraEnabled;
+    const toggleSeq = ++cameraToggleSeqRef.current;
+    setCameraSwitching(true);
+    setCameraEnabled(next);
+
+    if (!next) {
+      setMicEnabled(false);
+      setScreenSharing(false);
+      releaseAllMediaNow();
+      if (toggleSeq === cameraToggleSeqRef.current) {
+        setCameraSwitching(false);
+      }
+      return;
+    }
+
+    try {
+      await ensureCameraState(next);
+    } catch (error) {
+      console.error('Failed to toggle camera:', error);
+      showToast('切换摄像头失败，请检查权限', 'error');
+      setCameraEnabled(!next);
+    } finally {
+      if (toggleSeq === cameraToggleSeqRef.current) {
+        setCameraSwitching(false);
+      }
     }
   };
 
@@ -1715,22 +1709,22 @@ export function MeetingRoomPanel({
   return (
     <div className="meeting-room-panel">
       <div className="meeting-room-header">
-        <div>
+        <div className="meeting-room-title-row">
           <h2>{currentRoom.room_name}</h2>
+          <span className="meeting-room-code-inline">房间号 {currentRoom.room_code}</span>
+        </div>
+        <div className="meeting-room-header-tools">
+          <button className="meeting-room-info-toggle" onClick={() => void copyInviteInfo()}>
+            复制会议链接
+          </button>
         </div>
       </div>
 
       <div className="meeting-room-control-bar">
         <button
           className={`meeting-control-btn ${micEnabled ? 'active' : ''}`}
-          onClick={async () => {
-            const next = !micEnabled;
-            setMicEnabled(next);
-            await ensureMicState(next).catch((error) => {
-              console.error('Failed to toggle microphone:', error);
-              showToast('切换麦克风失败，请检查权限', 'error');
-              setMicEnabled(micEnabled);
-            });
+          onClick={() => {
+            void toggleMic();
           }}
         >
           {micEnabled ? '麦克风已开' : '麦克风已关'}
@@ -1738,33 +1732,9 @@ export function MeetingRoomPanel({
         <button
           className={`meeting-control-btn ${cameraEnabled ? 'active' : ''}`}
           disabled={cameraSwitching}
-          onClick={async () => {
-            const next = !cameraEnabled;
-            const toggleSeq = ++cameraToggleSeqRef.current;
-            setCameraSwitching(true);
-            setCameraEnabled(next);
-
-            if (!next) {
-              setMicEnabled(false);
-              setScreenSharing(false);
-              releaseAllMediaNow();
-              if (toggleSeq === cameraToggleSeqRef.current) {
-                setCameraSwitching(false);
-              }
-              return;
-            }
-
-            try {
-              await ensureCameraState(next);
-            } catch (error) {
-              console.error('Failed to toggle camera:', error);
-              showToast('切换摄像头失败，请检查权限', 'error');
-              setCameraEnabled(!next);
-            } finally {
-              if (toggleSeq === cameraToggleSeqRef.current) {
-                setCameraSwitching(false);
-              }
-            }
+          onClick={() => {
+            if (cameraSwitching) return;
+            void toggleCamera();
           }}
         >
           {cameraSwitching ? '切换中...' : (cameraEnabled ? '摄像头已开' : '摄像头已关')}
@@ -1897,42 +1867,44 @@ export function MeetingRoomPanel({
             </div>
           )}
         </div>
-        {isWebMode ? (
-          <button
-            className="meeting-control-btn meeting-control-end"
-            onClick={() => {
-              releaseAllMediaNow();
-              onLeave?.();
-            }}
-          >
-            离开会议
-          </button>
-        ) : (
-          <>
+        <div className="meeting-control-tail">
+          {isWebMode ? (
             <button
               className="meeting-control-btn meeting-control-end"
               onClick={() => {
                 releaseAllMediaNow();
-                onEnd?.();
+                onLeave?.();
               }}
             >
-              结束会议
+              离开会议
             </button>
-            <button
-              className="meeting-control-btn"
-              onClick={() => {
-                releaseAllMediaNow();
-                onBack?.();
-              }}
-            >
-              返回计划
-            </button>
-          </>
-        )}
+          ) : (
+            <>
+              <button
+                className="meeting-control-btn meeting-control-end"
+                onClick={() => {
+                  releaseAllMediaNow();
+                  onEnd?.();
+                }}
+              >
+                结束会议
+              </button>
+              <button
+                className="meeting-control-btn"
+                onClick={() => {
+                  releaseAllMediaNow();
+                  onBack?.();
+                }}
+              >
+                返回计划
+              </button>
+            </>
+          )}
+        </div>
       </div>
 
       <div className="meeting-room-body">
-        <div className={`meeting-room-video-grid ${isTwoPersonLayout ? 'two-person-layout' : ''}`}>
+        <div className={`meeting-room-video-grid ${isTwoPersonLayout ? 'two-person-layout' : ''} ${remotePeerTiles.length === 0 ? 'single-tile' : ''}`}>
           {isTwoPersonLayout && (
             <div className="meeting-stage-panel">
               <div className="meeting-stage-skeleton">
@@ -1953,6 +1925,7 @@ export function MeetingRoomPanel({
           )}
           <div
             className={`meeting-video-tile meeting-video-tile-local ${enableTileFocus ? 'meeting-video-tile-interactive' : ''} ${focusedTileId === 'local' ? 'focused' : ''} ${hasFocusedTile && focusedTileId !== 'local' ? 'dimmed' : ''}`}
+            data-audio-level={Math.round(localAudioLevel * 100)}
             onClick={enableTileFocus ? (() => setFocusedTileId((prev) => (prev === 'local' ? null : 'local'))) : undefined}
             onDoubleClick={enableTileFocus ? ((e) => requestTileFullscreen(e.target)) : undefined}
             title={enableTileFocus ? '点击聚焦，双击全屏' : '双人会议布局'}
@@ -1969,16 +1942,7 @@ export function MeetingRoomPanel({
                 <div className="meeting-local-placeholder-text">摄像头已关闭</div>
               </div>
             )}
-            <div className="meeting-video-tile-label">
-              <span>{userName.trim() || '我'}</span>
-              <span>{screenSharing ? '共享中' : '本地画面'}</span>
-              <span className="meeting-remote-audio-meter meeting-local-audio-meter">
-                <i style={{ width: `${Math.round(localAudioLevel * 100)}%` }} />
-              </span>
-              {localSpeaking && micEnabled && <span className="meeting-remote-speaking-badge">我在发言</span>}
-            </div>
           </div>
-          {remotePeerTiles.length === 0 && <div className="meeting-video-tile">暂无其他在线参会人</div>}
           {remotePeerTiles.map((peer) => {
             const stream = remoteStreams[peer.peer_id];
             const connState = peerConnStates[peer.peer_id] ?? 'new';
@@ -2076,79 +2040,7 @@ export function MeetingRoomPanel({
             </div>
           )}
         </div>
-        {showMeetingAdminPanel && (
-          <div className={`meeting-room-info-float ${infoCollapsed ? 'collapsed' : ''}`}>
-            <button
-              className="meeting-room-info-toggle"
-              onClick={() => setInfoCollapsed((v) => !v)}
-            >
-              {infoCollapsed ? '展开信息' : '收起信息'}
-            </button>
-            {!infoCollapsed && (
-              <div className="meeting-room-sidebar">
-                <h3>会议控制</h3>
-                <label className="meeting-room-name-input">
-                  昵称
-                  <input value={userName} onChange={(e) => setUserName(e.target.value)} placeholder="输入昵称" />
-                </label>
-                {mediaError && <p className="meeting-room-media-error">{mediaError}</p>}
-                <h3>会议连接信息</h3>
-                {!isWebMode && (
-                  <>
-                    <p className="meeting-room-token-label">Token（开发态）</p>
-                    <code className="meeting-room-token">{token || '-'}</code>
-                  </>
-                )}
-                <p className="meeting-room-token-label meeting-room-token-label-tight">共享房间码</p>
-                <code className="meeting-room-token">{currentRoom.room_code}</code>
-                <h3 className="meeting-room-subtitle">参会配置</h3>
-                <label className="meeting-room-name-input meeting-room-name-input-stacked">
-                  房间标识
-                  <input
-                    value={signalRoomKey}
-                    onChange={(e) => setSignalRoomKey(e.target.value)}
-                    placeholder="默认使用共享房间码"
-                  />
-                </label>
-                <div className="meeting-room-actions-inline">
-                  <button className="meeting-btn-secondary" onClick={saveSignalRoomConfig}>保存房间</button>
-                  <button className="meeting-btn-secondary" onClick={() => void copyInviteInfo()}>复制邀请</button>
-                </div>
-                <label className="meeting-room-name-input meeting-room-name-input-stacked">
-                  粘贴邀请
-                  <textarea
-                    value={inviteRawText}
-                    onChange={(e) => setInviteRawText(e.target.value)}
-                    className="meeting-room-invite-textarea"
-                    placeholder="粘贴完整邀请内容，自动识别房间标识"
-                  />
-                </label>
-                <div className="meeting-room-actions-inline">
-                  <button className="meeting-btn-secondary" onClick={importInviteInfo}>导入邀请</button>
-                </div>
-                <h3 className="meeting-room-subtitle">在线参会人</h3>
-                <div className="meeting-room-participants">
-                  {(isWebMode ? remotePeerTiles.length : participants.length) === 0 ? (
-                    <span className="meeting-room-participant-empty">暂无在线参会人</span>
-                  ) : (
-                    isWebMode
-                      ? remotePeerTiles.map((peer) => (
-                        <span key={peer.peer_id} className="meeting-room-participant-chip">
-                          {peer.user_name}
-                        </span>
-                      ))
-                      : participants.map((p) => (
-                        <span key={p.id} className="meeting-room-participant-chip">
-                          {p.user_name}
-                        </span>
-                      ))
-                  )}
-                </div>
-                <p className="meeting-room-hint">当前为第1阶段会议页骨架，已支持房间状态与在线参会人同步，后续接入实时音视频流。</p>
-              </div>
-            )}
-          </div>
-        )}
+        {mediaError && <p className="meeting-room-media-error">{mediaError}</p>}
       </div>
     </div>
   );
