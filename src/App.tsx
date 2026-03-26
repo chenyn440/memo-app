@@ -57,6 +57,10 @@ function WebPortalApp() {
   const [displayName, setDisplayName] = useState(() => localStorage.getItem(WEB_MEETING_NAME_KEY)?.trim() || '');
   const [roomKey, setRoomKey] = useState('');
   const [inviteText, setInviteText] = useState('');
+  const [authEmail, setAuthEmail] = useState('');
+  const [authCode, setAuthCode] = useState('');
+  const [webApiBase, setWebApiBase] = useState(() => api.getWebApiBaseUrl());
+  const [authToken, setAuthToken] = useState(() => api.getWebAuthToken());
 
   const navigate = (nextPath: string) => {
     if (window.location.pathname !== nextPath) {
@@ -83,6 +87,12 @@ function WebPortalApp() {
       setDisplayName(nameFromQuery);
     }
   }, [path]);
+
+  useEffect(() => {
+    if (path.startsWith('/app') && !authToken) {
+      navigate('/login');
+    }
+  }, [authToken, path]);
 
   const importInvite = () => {
     const raw = inviteText.trim();
@@ -116,6 +126,62 @@ function WebPortalApp() {
     navigate('/meeting');
   };
 
+  const sendCode = async () => {
+    const normalizedEmail = authEmail.trim();
+    if (!normalizedEmail) {
+      showToast('请填写邮箱', 'error');
+      return;
+    }
+    const normalizedBase = webApiBase.trim();
+    if (!normalizedBase) {
+      showToast('请填写 Web API 地址', 'error');
+      return;
+    }
+    api.setWebApiBaseUrl(normalizedBase);
+    try {
+      await api.sendAuthCode(normalizedEmail);
+      showToast('验证码已发送', 'success');
+    } catch (error) {
+      console.error('Failed to send auth code:', error);
+      showToast('发送验证码失败', 'error');
+    }
+  };
+
+  const login = async () => {
+    const normalizedEmail = authEmail.trim();
+    const normalizedCode = authCode.trim();
+    if (!normalizedEmail || !normalizedCode) {
+      showToast('请填写邮箱和验证码', 'error');
+      return;
+    }
+    const normalizedBase = webApiBase.trim();
+    if (!normalizedBase) {
+      showToast('请填写 Web API 地址', 'error');
+      return;
+    }
+    api.setWebApiBaseUrl(normalizedBase);
+    try {
+      const data = await api.verifyAuthCode(normalizedEmail, normalizedCode);
+      const token = data.access_token?.trim();
+      if (!token) {
+        throw new Error('token missing');
+      }
+      api.setWebAuthToken(token);
+      setAuthToken(token);
+      navigate('/app');
+    } catch (error) {
+      console.error('Failed to login:', error);
+      showToast('登录失败，请检查验证码', 'error');
+    }
+  };
+
+  const logout = () => {
+    api.logoutWeb();
+    setAuthToken('');
+    setAuthCode('');
+    navigate('/login');
+  };
+
   const leaveMeeting = () => {
     sessionStorage.removeItem(WEB_MEETING_SESSION_KEY);
     navigate('/join');
@@ -145,6 +211,71 @@ function WebPortalApp() {
           onLeave={leaveMeeting}
         />
       </>
+    );
+  }
+
+  if (path === '/app') {
+    if (!authToken) {
+      return (
+        <div className="web-portal-shell">
+          <ToastContainer />
+          <div className="web-card">
+            <h1>请先登录</h1>
+            <p>登录后可使用网页版笔记与计划。</p>
+            <button className="web-primary-btn" onClick={() => navigate('/login')}>去登录</button>
+          </div>
+        </div>
+      );
+    }
+    return (
+      <>
+        <DesktopApp />
+        <div style={{ position: 'fixed', right: 14, top: 12, zIndex: 99, display: 'flex', gap: 8 }}>
+          <button className="web-secondary-btn" onClick={() => navigate('/join')}>会议</button>
+          <button className="web-secondary-btn" onClick={logout}>退出</button>
+        </div>
+      </>
+    );
+  }
+
+  if (path === '/login') {
+    return (
+      <div className="web-portal-shell">
+        <ToastContainer />
+        <div className="web-card web-card-wide">
+          <h1>登录智能笔记</h1>
+          <p>登录后可在 Web 端使用笔记与计划。</p>
+          <label className="web-field">
+            <span>Web API 地址</span>
+            <input
+              value={webApiBase}
+              onChange={(e) => setWebApiBase(e.target.value)}
+              placeholder="例如 https://api.aiyn.cloud"
+            />
+          </label>
+          <label className="web-field">
+            <span>邮箱</span>
+            <input
+              value={authEmail}
+              onChange={(e) => setAuthEmail(e.target.value)}
+              placeholder="you@example.com"
+            />
+          </label>
+          <label className="web-field">
+            <span>验证码</span>
+            <input
+              value={authCode}
+              onChange={(e) => setAuthCode(e.target.value)}
+              placeholder="输入 6 位验证码"
+            />
+          </label>
+          <div className="web-actions">
+            <button className="web-secondary-btn" onClick={() => void sendCode()}>发送验证码</button>
+            <button className="web-primary-btn" onClick={() => void login()}>登录并进入工作台</button>
+          </div>
+          <button className="web-link-btn" onClick={() => navigate('/')}>返回首页</button>
+        </div>
+      </div>
     );
   }
 
@@ -185,10 +316,13 @@ function WebPortalApp() {
     <div className="web-portal-shell">
       <ToastContainer />
       <div className="web-card web-card-wide">
-        <h1>Memo 会议</h1>
-        <p>支持网页版快速入会，也支持下载桌面 App 获得完整能力。</p>
+        <h1>智能笔记 Web 门户</h1>
+        <p>支持网页版笔记/计划工作台与网页版会议。</p>
         <div className="web-actions">
-          <button className="web-primary-btn" onClick={() => navigate('/join')}>网页版进入会议</button>
+          <button className="web-primary-btn" onClick={() => navigate(authToken ? '/app' : '/login')}>
+            {authToken ? '进入工作台' : '登录工作台'}
+          </button>
+          <button className="web-secondary-btn" onClick={() => navigate('/join')}>网页版进入会议</button>
           <a className="web-secondary-btn web-link-anchor" href={APP_DOWNLOAD_URL} target="_blank" rel="noreferrer">
             下载桌面 App
           </a>
