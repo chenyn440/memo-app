@@ -10,6 +10,9 @@ APP_NAME="${APP_NAME:-meeting-signal}"
 SIGNAL_HOST="${SIGNAL_HOST:-127.0.0.1}"
 SIGNAL_PORT="${SIGNAL_PORT:-8787}"
 PROJECT_DIR="${PROJECT_DIR:-$(cd "$(dirname "$0")/.." && pwd)}"
+BUILD_ON_START="${BUILD_ON_START:-1}"
+BUILD_CMD="${BUILD_CMD:-npm run build}"
+NPM_INSTALL_ON_START="${NPM_INSTALL_ON_START:-1}"
 
 if ! command -v pm2 >/dev/null 2>&1; then
   echo "未检测到 pm2，请先安装：npm i -g pm2" >&2
@@ -23,8 +26,28 @@ fi
 
 cd "$PROJECT_DIR"
 
-echo "启动 PM2 应用: $APP_NAME (host=${SIGNAL_HOST}, port=${SIGNAL_PORT})"
+if [[ "$NPM_INSTALL_ON_START" == "1" ]]; then
+  echo "安装依赖..."
+  npm install
+fi
+
+if [[ "$BUILD_ON_START" == "1" ]]; then
+  echo "执行打包: $BUILD_CMD"
+  bash -lc "$BUILD_CMD"
+fi
+
+echo "清理旧进程..."
 pm2 delete "$APP_NAME" >/dev/null 2>&1 || true
+pkill -f "meeting-signal-server.mjs" >/dev/null 2>&1 || true
+
+if command -v lsof >/dev/null 2>&1; then
+  OLD_PIDS="$(lsof -ti tcp:"$SIGNAL_PORT" -sTCP:LISTEN 2>/dev/null || true)"
+  if [[ -n "$OLD_PIDS" ]]; then
+    echo "$OLD_PIDS" | xargs kill >/dev/null 2>&1 || true
+  fi
+fi
+
+echo "启动 PM2 应用: $APP_NAME (host=${SIGNAL_HOST}, port=${SIGNAL_PORT})"
 MEETING_SIGNAL_HOST="$SIGNAL_HOST" MEETING_SIGNAL_PORT="$SIGNAL_PORT" \
   pm2 start scripts/meeting-signal-server.mjs \
     --name "$APP_NAME" \
