@@ -2750,6 +2750,7 @@ button:active {
   margin-left: auto;
   display: inline-flex;
   align-items: center;
+  gap: 8px;
   position: relative;
   z-index: 8;
 }
@@ -3567,6 +3568,26 @@ button:active {
   font-size: 11px;
 }
 
+.meeting-track-icon {
+  min-width: 22px;
+  height: 20px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 999px;
+  padding: 0 6px;
+  background: rgba(255, 255, 255, 0.12);
+}
+
+.meeting-track-icon.on {
+  color: #e9fff1;
+}
+
+.meeting-track-icon.off {
+  color: #ffd4d4;
+  background: rgba(199, 75, 75, 0.28);
+}
+
 .meeting-local-audio-meter {
   margin-left: auto;
   flex-basis: 56px;
@@ -3937,12 +3958,14 @@ button:active {
   }
 
   .meeting-room-video-grid {
-    --meeting-tile-min-width: 180px;
-    --meeting-tile-width: clamp(180px, 44vw, 220px);
     padding: 8px;
     gap: 8px;
-    grid-template-columns: repeat(auto-fill, minmax(var(--meeting-tile-min-width), var(--meeting-tile-width)));
-    justify-content: center;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    justify-content: stretch;
+  }
+
+  .meeting-room-video-grid.single-tile .meeting-video-tile {
+    width: 100%;
   }
 
   .meeting-video-tile.focused {

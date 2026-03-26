@@ -1823,11 +1823,6 @@ export function MeetingRoomPanel({
             {refreshing ? '刷新中...' : '刷新状态'}
           </button>
         )}
-        {audioUnlockNeeded && (
-          <button className="meeting-control-btn active" onClick={() => void resumeRemoteAudioPlayback()}>
-            开启声音
-          </button>
-        )}
         <div ref={beautyTabRef} className={`meeting-beauty-tab ${beautyTabOpen ? 'open' : ''}`}>
           <button
             type="button"
@@ -1990,24 +1985,18 @@ export function MeetingRoomPanel({
                     <div className="meeting-local-placeholder-text">摄像头已关闭</div>
                   </div>
                 )}
+                <div className="meeting-video-tile-label">
+                  <span>{userName.trim() || '我'}</span>
+                  <span className={`meeting-track-icon ${micEnabled ? 'on' : 'off'}`}>{micEnabled ? '🎤' : '🔇'}</span>
+                  <span className={`meeting-track-icon ${cameraEnabled || screenSharing ? 'on' : 'off'}`}>{cameraEnabled || screenSharing ? '📷' : '📷🚫'}</span>
+                </div>
               </div>
               {remotePeerTiles.map((peer) => {
                 const stream = remoteStreams[peer.peer_id];
                 const connState = peerConnStates[peer.peer_id] ?? 'new';
-                const hasVideo = Boolean(stream?.getVideoTracks().some((track) => track.readyState === 'live' && track.enabled));
-                const hasAudio = Boolean(stream?.getAudioTracks().some((track) => track.readyState === 'live' && track.enabled));
                 const level = remoteAudioLevels[peer.peer_id] ?? 0;
                 const isSpeaking = activeSpeakerPeerId === peer.peer_id;
                 const tileId = `peer:${peer.peer_id}`;
-                const connLabel = connState === 'connected'
-                  ? '已连接'
-                  : connState === 'connecting'
-                    ? '连接中'
-                    : connState === 'disconnected'
-                      ? '已断开'
-                      : connState === 'failed'
-                        ? '连接失败'
-                        : '准备中';
                 return (
                   <div
                     key={peer.peer_id}
@@ -2040,13 +2029,11 @@ export function MeetingRoomPanel({
                     )}
                     <div className="meeting-remote-tile-label">
                       <span>{peer.user_name}</span>
-                      <span>{connLabel}</span>
-                      <span>对方 {peer.camera_on ? '开视频' : '关视频'} / {peer.mic_on ? '开麦' : '关麦'}</span>
-                      {stream && <span>流 {hasVideo ? '视频有' : '视频无'} / {hasAudio ? '音频有' : '音频无'}</span>}
-                      <span className="meeting-remote-audio-meter">
+                      <span className={`meeting-track-icon ${peer.mic_on ? 'on' : 'off'}`}>{peer.mic_on ? '🎤' : '🔇'}</span>
+                      <span className={`meeting-track-icon ${peer.camera_on ? 'on' : 'off'}`}>{peer.camera_on ? '📷' : '📷🚫'}</span>
+                      <span className="meeting-remote-audio-meter" title={connState}>
                         <i style={{ width: `${Math.round(level * 100)}%` }} />
                       </span>
-                      {isSpeaking && <span className="meeting-remote-speaking-badge">发言中</span>}
                     </div>
                   </div>
                 );
