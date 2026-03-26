@@ -2919,35 +2919,138 @@ button:active {
 }
 
 .meeting-room-video-grid.two-person-layout {
-  grid-template-columns: minmax(0, 1.75fr) minmax(0, 0.85fr);
-  grid-template-rows: 176px minmax(0, 1fr);
+  grid-template-columns: 1fr 1fr;
+  grid-template-rows: minmax(240px, 1fr) minmax(210px, 0.95fr);
+  gap: 12px;
+  padding: 12px;
+  background: #f3f5f8;
+}
+
+.meeting-stage-panel {
+  grid-column: 1 / -1;
+  grid-row: 1;
+  border: 1px solid #d7deea;
+  border-radius: 14px;
+  background: #f7f9fc;
+  position: relative;
+  overflow: hidden;
+  padding: 16px;
+  display: flex;
+  flex-direction: column;
+  justify-content: flex-end;
+  gap: 10px;
+}
+
+.meeting-stage-skeleton {
+  position: absolute;
+  top: 18px;
+  left: 20px;
+  width: 46%;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.meeting-stage-skeleton i {
+  display: block;
+  height: 26px;
+  border-radius: 8px;
+  background: #e9edf5;
+}
+
+.meeting-stage-skeleton i:nth-child(1) { width: 34%; }
+.meeting-stage-skeleton i:nth-child(2) { width: 74%; }
+.meeting-stage-skeleton i:nth-child(3) { width: 52%; }
+
+.meeting-stage-card {
+  position: relative;
+  border: 1px solid #e2e7f1;
+  border-radius: 12px;
+  background: #ffffffde;
+  padding: 12px 14px;
+  max-width: min(560px, 84%);
+}
+
+.meeting-stage-card strong {
+  display: block;
+  color: #4b5667;
+  font-size: 20px;
+  line-height: 1.3;
+}
+
+.meeting-stage-card p {
+  margin: 8px 0 0;
+  border-radius: 8px;
+  background: #edf1f6;
+}
+
+.meeting-stage-card p:last-child {
+  width: auto;
+}
+
+.meeting-stage-summary {
+  padding: 8px 10px;
+  font-size: 13px;
+  line-height: 1.45;
+  color: #5a6678;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.meeting-stage-status {
+  padding: 6px 10px;
+  font-size: 12px;
+  color: #6f7b8e;
+}
+
+.meeting-stage-tag {
+  align-self: flex-start;
+  border: 1px solid #d7deea;
+  border-radius: 8px;
+  padding: 2px 8px;
+  background: #fff;
+  color: #697487;
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.meeting-stage-tags {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
 }
 
 .meeting-room-video-grid.two-person-layout .meeting-video-tile-remote {
-  grid-column: 1;
-  grid-row: 1 / span 2;
-  min-height: 420px;
+  grid-column: 2;
+  grid-row: 2;
+  min-height: 210px;
+  border-color: #d7deea;
+  background: #dcdfe6;
+  border-radius: 12px;
 }
 
 .meeting-room-video-grid.two-person-layout .meeting-video-tile-local {
-  grid-column: 2;
-  grid-row: 1;
-  width: min(260px, 86%);
-  min-height: 132px;
-  max-height: 156px;
-  justify-self: end;
-  align-self: start;
-  margin: 6px 8px 0 0;
-  box-shadow: 0 10px 26px rgba(15, 20, 28, 0.32);
+  grid-column: 1;
+  grid-row: 2;
+  width: 100%;
+  min-height: 210px;
+  max-height: none;
+  justify-self: stretch;
+  align-self: stretch;
+  margin: 0;
+  border-radius: 12px;
+  border-color: #d7deea;
+  box-shadow: none;
 }
 
 .meeting-chat-panel {
   grid-column: 2;
   grid-row: 2;
   min-height: 0;
-  border: 1px solid var(--color-border);
-  border-radius: var(--radius-md);
-  background: var(--color-surface);
+  border: 1px solid #d7deea;
+  border-radius: 12px;
+  background: #fff;
   display: flex;
   flex-direction: column;
   overflow: hidden;
@@ -2958,21 +3061,22 @@ button:active {
   display: flex;
   align-items: center;
   padding: 0 10px;
-  border-bottom: 1px solid var(--color-border-light);
+  border-bottom: 1px solid #e3e8f0;
   font-size: 12px;
   font-weight: 700;
-  color: var(--color-text-secondary);
-  background: var(--color-sidebar);
+  color: #596273;
+  background: #f7f9fc;
 }
 
 .meeting-chat-list {
   flex: 1;
   min-height: 0;
   overflow: auto;
-  padding: 8px;
+  padding: 10px;
   display: flex;
   flex-direction: column;
   gap: 8px;
+  background: #fff;
 }
 
 .meeting-chat-empty {
@@ -3012,10 +3116,11 @@ button:active {
 }
 
 .meeting-chat-input-row {
-  border-top: 1px solid var(--color-border-light);
-  padding: 8px;
+  border-top: 1px solid #e3e8f0;
+  padding: 8px 10px;
   display: flex;
   gap: 6px;
+  background: #f7f9fc;
 }
 
 .meeting-chat-input-row input {
@@ -3050,6 +3155,15 @@ button:active {
 .meeting-chat-input-row button:hover {
   border-color: var(--color-primary-hover);
   background: var(--color-primary-hover);
+}
+
+.meeting-room-video-grid.two-person-layout .meeting-video-tile-interactive:hover {
+  transform: none;
+  box-shadow: none;
+}
+
+.meeting-room-video-grid.two-person-layout .meeting-chat-panel {
+  display: none;
 }
 
 .meeting-room-info-float {
@@ -3486,12 +3600,32 @@ button:active {
 
   .meeting-room-video-grid.two-person-layout {
     grid-template-columns: 1fr;
-    grid-template-rows: minmax(220px, 1fr) 148px 220px;
+    grid-template-rows: minmax(200px, 1fr) 200px 200px;
+  }
+
+  .meeting-stage-panel {
+    grid-column: 1;
+    grid-row: 1;
+    padding: 12px;
+  }
+
+  .meeting-stage-skeleton {
+    width: 72%;
+    left: 12px;
+    top: 12px;
+  }
+
+  .meeting-stage-card {
+    max-width: 96%;
+  }
+
+  .meeting-stage-card strong {
+    font-size: 16px;
   }
 
   .meeting-room-video-grid.two-person-layout .meeting-video-tile-remote {
     grid-column: 1;
-    grid-row: 1;
+    grid-row: 3;
     min-height: 220px;
   }
 
@@ -3499,8 +3633,8 @@ button:active {
     grid-column: 1;
     grid-row: 2;
     width: 100%;
-    min-height: 148px;
-    max-height: 148px;
+    min-height: 200px;
+    max-height: none;
     margin: 0;
     justify-self: stretch;
     align-self: stretch;
@@ -3585,12 +3719,12 @@ button:active {
   }
 
   .meeting-room-video-grid.two-person-layout {
-    grid-template-rows: minmax(200px, 1fr) 136px 200px;
+    grid-template-rows: minmax(180px, 1fr) 168px 168px;
   }
 
   .meeting-room-video-grid.two-person-layout .meeting-video-tile-local {
-    min-height: 136px;
-    max-height: 136px;
+    min-height: 168px;
+    max-height: none;
   }
 
   .meeting-chat-panel {
@@ -3600,6 +3734,14 @@ button:active {
   .meeting-chat-list {
     padding: 6px;
     gap: 6px;
+  }
+
+  .web-field input,
+  .web-field textarea,
+  .meeting-room-name-input input,
+  .meeting-room-invite-textarea,
+  .meeting-chat-input-row input {
+    font-size: 16px;
   }
 }
 

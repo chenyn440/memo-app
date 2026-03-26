@@ -148,6 +148,7 @@ export function MeetingRoomPanel({
   const [cameraEnabled, setCameraEnabled] = useState(true);
   const [screenSharing, setScreenSharing] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
+  const [audioUnlockNeeded, setAudioUnlockNeeded] = useState(false);
   const [cameraSwitching, setCameraSwitching] = useState(false);
   const [infoCollapsed, setInfoCollapsed] = useState(false);
   const [signalRoomKey, setSignalRoomKey] = useState(
@@ -347,6 +348,17 @@ export function MeetingRoomPanel({
     }
     if (typeof fullscreenEl.webkitRequestFullscreen === 'function') {
       fullscreenEl.webkitRequestFullscreen();
+    }
+  };
+
+  const resumeRemoteAudioPlayback = async () => {
+    const nodes = Array.from(document.querySelectorAll<HTMLVideoElement>('.meeting-remote-video'));
+    if (nodes.length === 0) return;
+    const results = await Promise.allSettled(nodes.map((node) => node.play()));
+    const blocked = results.some((item) => item.status === 'rejected');
+    setAudioUnlockNeeded(blocked);
+    if (!blocked) {
+      showToast('远端声音已开启', 'success');
     }
   };
 
@@ -941,11 +953,36 @@ export function MeetingRoomPanel({
   const localDisplayName = (userName.trim() || '我').slice(0, 1).toUpperCase();
   const hasFocusedTile = Boolean(focusedTileId);
   const isTwoPersonLayout = remotePeerTiles.length === 1 && !hasFocusedTile;
+  const enableTileFocus = !isTwoPersonLayout;
+  const activeSpeakerName = useMemo(() => {
+    if (!activeSpeakerPeerId) {
+      if (localSpeaking) return userName.trim() || '我';
+      return null;
+    }
+    const peer = remotePeerTiles.find((item) => item.peer_id === activeSpeakerPeerId);
+    return peer?.user_name ?? null;
+  }, [activeSpeakerPeerId, localSpeaking, remotePeerTiles, userName]);
+  const lastChatMessage = useMemo(
+    () => (chatMessages.length > 0 ? chatMessages[chatMessages.length - 1] : null),
+    [chatMessages]
+  );
+  const stageHeadline = activeSpeakerName ? `${activeSpeakerName} 正在发言` : '会议进行中';
+  const stageSummary = lastChatMessage
+    ? `${lastChatMessage.senderName}：${lastChatMessage.text}`
+    : '暂无聊天内容，开始讨论后这里会展示最近消息。';
+  const stageStatusLine = `在线 ${onlineCount} 人 · 信令${rtcSyncState === 'ok' ? '正常' : rtcSyncState === 'syncing' ? '同步中' : '重试中'} · 时长 ${elapsedLabel}`;
+  const showMeetingAdminPanel = !isWebMode;
 
   useEffect(() => {
     if (!chatListRef.current) return;
     chatListRef.current.scrollTop = chatListRef.current.scrollHeight;
   }, [chatMessages]);
+
+  useEffect(() => {
+    if (isTwoPersonLayout && focusedTileId) {
+      setFocusedTileId(null);
+    }
+  }, [isTwoPersonLayout, focusedTileId]);
 
   useEffect(() => {
     if (!focusedTileId) return;
@@ -1664,53 +1701,22 @@ export function MeetingRoomPanel({
     return () => document.removeEventListener('mousedown', handlePointerDown);
   }, [beautyTabOpen]);
 
+  useEffect(() => {
+    if (!audioUnlockNeeded) return;
+    const unlock = () => {
+      void resumeRemoteAudioPlayback();
+    };
+    document.addEventListener('pointerdown', unlock, { once: true });
+    return () => {
+      document.removeEventListener('pointerdown', unlock);
+    };
+  }, [audioUnlockNeeded]);
+
   return (
     <div className="meeting-room-panel">
       <div className="meeting-room-header">
         <div>
           <h2>{currentRoom.room_name}</h2>
-          <div className="meeting-room-meta">
-            <span>房间号 {currentRoom.room_code}</span>
-            <span>状态 {currentRoom.state === 'in_progress' ? '进行中' : currentRoom.state === 'ended' ? '已结束' : '待开始'}</span>
-            <span>在线 {onlineCount} 人</span>
-            <span>时长 {elapsedLabel}</span>
-            <span>同步 {rtcSyncState === 'ok' ? '正常' : rtcSyncState === 'syncing' ? '同步中' : '重试中'}</span>
-            <span>信令 远程</span>
-          </div>
-        </div>
-        <div className="meeting-room-actions">
-          {isWebMode ? (
-            <button
-              className="meeting-btn-secondary"
-              onClick={() => {
-                releaseAllMediaNow();
-                onLeave?.();
-              }}
-            >
-              离开会议
-            </button>
-          ) : (
-            <>
-              <button
-                className="meeting-btn-secondary"
-                onClick={() => {
-                  releaseAllMediaNow();
-                  onBack?.();
-                }}
-              >
-                返回计划
-              </button>
-              <button
-                className="meeting-btn-primary"
-                onClick={() => {
-                  releaseAllMediaNow();
-                  onEnd?.();
-                }}
-              >
-                结束会议
-              </button>
-            </>
-          )}
         </div>
       </div>
 
@@ -1801,6 +1807,11 @@ export function MeetingRoomPanel({
             {refreshing ? '刷新中...' : '刷新状态'}
           </button>
         )}
+        {audioUnlockNeeded && (
+          <button className="meeting-control-btn active" onClick={() => void resumeRemoteAudioPlayback()}>
+            开启声音
+          </button>
+        )}
         <div ref={beautyTabRef} className={`meeting-beauty-tab ${beautyTabOpen ? 'open' : ''}`}>
           <button
             type="button"
@@ -1886,15 +1897,65 @@ export function MeetingRoomPanel({
             </div>
           )}
         </div>
+        {isWebMode ? (
+          <button
+            className="meeting-control-btn meeting-control-end"
+            onClick={() => {
+              releaseAllMediaNow();
+              onLeave?.();
+            }}
+          >
+            离开会议
+          </button>
+        ) : (
+          <>
+            <button
+              className="meeting-control-btn meeting-control-end"
+              onClick={() => {
+                releaseAllMediaNow();
+                onEnd?.();
+              }}
+            >
+              结束会议
+            </button>
+            <button
+              className="meeting-control-btn"
+              onClick={() => {
+                releaseAllMediaNow();
+                onBack?.();
+              }}
+            >
+              返回计划
+            </button>
+          </>
+        )}
       </div>
 
       <div className="meeting-room-body">
         <div className={`meeting-room-video-grid ${isTwoPersonLayout ? 'two-person-layout' : ''}`}>
+          {isTwoPersonLayout && (
+            <div className="meeting-stage-panel">
+              <div className="meeting-stage-skeleton">
+                <i />
+                <i />
+                <i />
+              </div>
+              <div className="meeting-stage-card">
+                <strong>{stageHeadline}</strong>
+                <p className="meeting-stage-summary">{stageSummary}</p>
+                <p className="meeting-stage-status">{stageStatusLine}</p>
+              </div>
+              <div className="meeting-stage-tags">
+                <span className="meeting-stage-tag">房间 {currentRoom.room_code}</span>
+                <span className="meeting-stage-tag">{screenSharing ? '共享屏幕中' : '摄像头会议'}</span>
+              </div>
+            </div>
+          )}
           <div
-            className={`meeting-video-tile meeting-video-tile-local meeting-video-tile-interactive ${focusedTileId === 'local' ? 'focused' : ''} ${hasFocusedTile && focusedTileId !== 'local' ? 'dimmed' : ''}`}
-            onClick={() => setFocusedTileId((prev) => (prev === 'local' ? null : 'local'))}
-            onDoubleClick={(e) => requestTileFullscreen(e.target)}
-            title="点击聚焦，双击全屏"
+            className={`meeting-video-tile meeting-video-tile-local ${enableTileFocus ? 'meeting-video-tile-interactive' : ''} ${focusedTileId === 'local' ? 'focused' : ''} ${hasFocusedTile && focusedTileId !== 'local' ? 'dimmed' : ''}`}
+            onClick={enableTileFocus ? (() => setFocusedTileId((prev) => (prev === 'local' ? null : 'local'))) : undefined}
+            onDoubleClick={enableTileFocus ? ((e) => requestTileFullscreen(e.target)) : undefined}
+            title={enableTileFocus ? '点击聚焦，双击全屏' : '双人会议布局'}
           >
             <video ref={localVideoRef} autoPlay playsInline muted className="meeting-local-video-source" />
             <canvas
@@ -1938,21 +1999,27 @@ export function MeetingRoomPanel({
             return (
               <div
                 key={peer.peer_id}
-                className={`meeting-video-tile meeting-video-tile-remote meeting-video-tile-interactive ${focusedTileId === tileId ? 'focused' : ''} ${hasFocusedTile && focusedTileId !== tileId ? 'dimmed' : ''} ${isSpeaking ? 'speaking' : ''}`}
-                onClick={() => setFocusedTileId((prev) => (prev === tileId ? null : tileId))}
-                onDoubleClick={(e) => requestTileFullscreen(e.target)}
-                title="点击聚焦，双击全屏"
+                className={`meeting-video-tile meeting-video-tile-remote ${enableTileFocus ? 'meeting-video-tile-interactive' : ''} ${focusedTileId === tileId ? 'focused' : ''} ${hasFocusedTile && focusedTileId !== tileId ? 'dimmed' : ''} ${isSpeaking ? 'speaking' : ''}`}
+                onClick={enableTileFocus ? (() => setFocusedTileId((prev) => (prev === tileId ? null : tileId))) : undefined}
+                onDoubleClick={enableTileFocus ? ((e) => requestTileFullscreen(e.target)) : undefined}
+                title={enableTileFocus ? '点击聚焦，双击全屏' : '双人会议布局'}
               >
                 {stream ? (
                   <video
+                    className="meeting-remote-video"
                     autoPlay
                     playsInline
                     ref={(el) => {
                       if (!el) return;
+                      el.muted = false;
+                      el.volume = 1;
                       if (el.srcObject !== stream) {
                         el.srcObject = stream;
                       }
-                      void el.play().catch(() => undefined);
+                      void el.play().catch((error) => {
+                        console.warn('Remote video autoplay blocked:', error);
+                        setAudioUnlockNeeded(true);
+                      });
                     }}
                     style={{ width: '100%', height: '100%', objectFit: 'cover' }}
                   />
@@ -2009,77 +2076,79 @@ export function MeetingRoomPanel({
             </div>
           )}
         </div>
-        <div className={`meeting-room-info-float ${infoCollapsed ? 'collapsed' : ''}`}>
-          <button
-            className="meeting-room-info-toggle"
-            onClick={() => setInfoCollapsed((v) => !v)}
-          >
-            {infoCollapsed ? '展开信息' : '收起信息'}
-          </button>
-          {!infoCollapsed && (
-            <div className="meeting-room-sidebar">
-              <h3>会议控制</h3>
-              <label className="meeting-room-name-input">
-                昵称
-                <input value={userName} onChange={(e) => setUserName(e.target.value)} placeholder="输入昵称" />
-              </label>
-              {mediaError && <p className="meeting-room-media-error">{mediaError}</p>}
-              <h3>会议连接信息</h3>
-              {!isWebMode && (
-                <>
-                  <p className="meeting-room-token-label">Token（开发态）</p>
-                  <code className="meeting-room-token">{token || '-'}</code>
-                </>
-              )}
-              <p className="meeting-room-token-label meeting-room-token-label-tight">共享房间码</p>
-              <code className="meeting-room-token">{currentRoom.room_code}</code>
-              <h3 className="meeting-room-subtitle">参会配置</h3>
-              <label className="meeting-room-name-input meeting-room-name-input-stacked">
-                房间标识
-                <input
-                  value={signalRoomKey}
-                  onChange={(e) => setSignalRoomKey(e.target.value)}
-                  placeholder="默认使用共享房间码"
-                />
-              </label>
-              <div className="meeting-room-actions-inline">
-                <button className="meeting-btn-secondary" onClick={saveSignalRoomConfig}>保存房间</button>
-                <button className="meeting-btn-secondary" onClick={() => void copyInviteInfo()}>复制邀请</button>
-              </div>
-              <label className="meeting-room-name-input meeting-room-name-input-stacked">
-                粘贴邀请
-                <textarea
-                  value={inviteRawText}
-                  onChange={(e) => setInviteRawText(e.target.value)}
-                  className="meeting-room-invite-textarea"
-                  placeholder="粘贴完整邀请内容，自动识别房间标识"
-                />
-              </label>
-              <div className="meeting-room-actions-inline">
-                <button className="meeting-btn-secondary" onClick={importInviteInfo}>导入邀请</button>
-              </div>
-              <h3 className="meeting-room-subtitle">在线参会人</h3>
-              <div className="meeting-room-participants">
-                {(isWebMode ? remotePeerTiles.length : participants.length) === 0 ? (
-                  <span className="meeting-room-participant-empty">暂无在线参会人</span>
-                ) : (
-                  isWebMode
-                    ? remotePeerTiles.map((peer) => (
-                      <span key={peer.peer_id} className="meeting-room-participant-chip">
-                        {peer.user_name}
-                      </span>
-                    ))
-                    : participants.map((p) => (
-                      <span key={p.id} className="meeting-room-participant-chip">
-                        {p.user_name}
-                      </span>
-                    ))
+        {showMeetingAdminPanel && (
+          <div className={`meeting-room-info-float ${infoCollapsed ? 'collapsed' : ''}`}>
+            <button
+              className="meeting-room-info-toggle"
+              onClick={() => setInfoCollapsed((v) => !v)}
+            >
+              {infoCollapsed ? '展开信息' : '收起信息'}
+            </button>
+            {!infoCollapsed && (
+              <div className="meeting-room-sidebar">
+                <h3>会议控制</h3>
+                <label className="meeting-room-name-input">
+                  昵称
+                  <input value={userName} onChange={(e) => setUserName(e.target.value)} placeholder="输入昵称" />
+                </label>
+                {mediaError && <p className="meeting-room-media-error">{mediaError}</p>}
+                <h3>会议连接信息</h3>
+                {!isWebMode && (
+                  <>
+                    <p className="meeting-room-token-label">Token（开发态）</p>
+                    <code className="meeting-room-token">{token || '-'}</code>
+                  </>
                 )}
+                <p className="meeting-room-token-label meeting-room-token-label-tight">共享房间码</p>
+                <code className="meeting-room-token">{currentRoom.room_code}</code>
+                <h3 className="meeting-room-subtitle">参会配置</h3>
+                <label className="meeting-room-name-input meeting-room-name-input-stacked">
+                  房间标识
+                  <input
+                    value={signalRoomKey}
+                    onChange={(e) => setSignalRoomKey(e.target.value)}
+                    placeholder="默认使用共享房间码"
+                  />
+                </label>
+                <div className="meeting-room-actions-inline">
+                  <button className="meeting-btn-secondary" onClick={saveSignalRoomConfig}>保存房间</button>
+                  <button className="meeting-btn-secondary" onClick={() => void copyInviteInfo()}>复制邀请</button>
+                </div>
+                <label className="meeting-room-name-input meeting-room-name-input-stacked">
+                  粘贴邀请
+                  <textarea
+                    value={inviteRawText}
+                    onChange={(e) => setInviteRawText(e.target.value)}
+                    className="meeting-room-invite-textarea"
+                    placeholder="粘贴完整邀请内容，自动识别房间标识"
+                  />
+                </label>
+                <div className="meeting-room-actions-inline">
+                  <button className="meeting-btn-secondary" onClick={importInviteInfo}>导入邀请</button>
+                </div>
+                <h3 className="meeting-room-subtitle">在线参会人</h3>
+                <div className="meeting-room-participants">
+                  {(isWebMode ? remotePeerTiles.length : participants.length) === 0 ? (
+                    <span className="meeting-room-participant-empty">暂无在线参会人</span>
+                  ) : (
+                    isWebMode
+                      ? remotePeerTiles.map((peer) => (
+                        <span key={peer.peer_id} className="meeting-room-participant-chip">
+                          {peer.user_name}
+                        </span>
+                      ))
+                      : participants.map((p) => (
+                        <span key={p.id} className="meeting-room-participant-chip">
+                          {p.user_name}
+                        </span>
+                      ))
+                  )}
+                </div>
+                <p className="meeting-room-hint">当前为第1阶段会议页骨架，已支持房间状态与在线参会人同步，后续接入实时音视频流。</p>
               </div>
-              <p className="meeting-room-hint">当前为第1阶段会议页骨架，已支持房间状态与在线参会人同步，后续接入实时音视频流。</p>
-            </div>
-          )}
-        </div>
+            )}
+          </div>
+        )}
       </div>
     </div>
   );
