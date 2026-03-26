@@ -57,8 +57,8 @@ function WebPortalApp() {
   const [displayName, setDisplayName] = useState(() => localStorage.getItem(WEB_MEETING_NAME_KEY)?.trim() || '');
   const [roomKey, setRoomKey] = useState('');
   const [inviteText, setInviteText] = useState('');
-  const [authEmail, setAuthEmail] = useState('');
-  const [authCode, setAuthCode] = useState('');
+  const [authAccount, setAuthAccount] = useState('');
+  const [authPassword, setAuthPassword] = useState('');
   const [authToken, setAuthToken] = useState(() => api.getWebAuthToken());
 
   const navigate = (nextPath: string) => {
@@ -125,30 +125,38 @@ function WebPortalApp() {
     navigate('/meeting');
   };
 
-  const sendCode = async () => {
-    const normalizedEmail = authEmail.trim();
-    if (!normalizedEmail) {
-      showToast('请填写邮箱', 'error');
+  const register = async () => {
+    const normalizedAccount = authAccount.trim();
+    const normalizedPassword = authPassword.trim();
+    if (!normalizedAccount || !normalizedPassword) {
+      showToast('请填写账号和密码', 'error');
       return;
     }
     try {
-      await api.sendAuthCode(normalizedEmail);
-      showToast('验证码已发送', 'success');
+      const data = await api.registerWithPassword(normalizedAccount, normalizedPassword);
+      const token = data.access_token?.trim();
+      if (!token) {
+        throw new Error('token missing');
+      }
+      api.setWebAuthToken(token);
+      setAuthToken(token);
+      showToast('注册成功，已登录', 'success');
+      navigate('/app');
     } catch (error) {
-      console.error('Failed to send auth code:', error);
-      showToast('发送验证码失败', 'error');
+      console.error('Failed to register:', error);
+      showToast('注册失败，请稍后重试', 'error');
     }
   };
 
   const login = async () => {
-    const normalizedEmail = authEmail.trim();
-    const normalizedCode = authCode.trim();
-    if (!normalizedEmail || !normalizedCode) {
-      showToast('请填写邮箱和验证码', 'error');
+    const normalizedAccount = authAccount.trim();
+    const normalizedPassword = authPassword.trim();
+    if (!normalizedAccount || !normalizedPassword) {
+      showToast('请填写账号和密码', 'error');
       return;
     }
     try {
-      const data = await api.verifyAuthCode(normalizedEmail, normalizedCode);
+      const data = await api.loginWithPassword(normalizedAccount, normalizedPassword);
       const token = data.access_token?.trim();
       if (!token) {
         throw new Error('token missing');
@@ -158,14 +166,14 @@ function WebPortalApp() {
       navigate('/app');
     } catch (error) {
       console.error('Failed to login:', error);
-      showToast('登录失败，请检查验证码', 'error');
+      showToast('登录失败，请检查账号密码', 'error');
     }
   };
 
   const logout = () => {
     api.logoutWeb();
     setAuthToken('');
-    setAuthCode('');
+    setAuthPassword('');
     navigate('/login');
   };
 
@@ -233,23 +241,24 @@ function WebPortalApp() {
           <h1>登录智能笔记</h1>
           <p>登录后可在 Web 端使用笔记与计划。</p>
           <label className="web-field">
-            <span>邮箱</span>
+            <span>账号</span>
             <input
-              value={authEmail}
-              onChange={(e) => setAuthEmail(e.target.value)}
-              placeholder="you@example.com"
+              value={authAccount}
+              onChange={(e) => setAuthAccount(e.target.value)}
+              placeholder="请输入账号"
             />
           </label>
           <label className="web-field">
-            <span>验证码</span>
+            <span>密码</span>
             <input
-              value={authCode}
-              onChange={(e) => setAuthCode(e.target.value)}
-              placeholder="输入 6 位验证码"
+              type="password"
+              value={authPassword}
+              onChange={(e) => setAuthPassword(e.target.value)}
+              placeholder="请输入密码"
             />
           </label>
           <div className="web-actions">
-            <button className="web-secondary-btn" onClick={() => void sendCode()}>发送验证码</button>
+            <button className="web-secondary-btn" onClick={() => void register()}>注册并进入工作台</button>
             <button className="web-primary-btn" onClick={() => void login()}>登录并进入工作台</button>
           </div>
           <button className="web-link-btn" onClick={() => navigate('/')}>返回首页</button>

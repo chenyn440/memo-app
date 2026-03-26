@@ -7,8 +7,11 @@ const PEER_TTL_MS = 15_000;
 const SIGNAL_TTL_MS = 120_000;
 
 const rooms = new Map();
+const users = new Map();
+const tokens = new Map();
 
 const nowIso = () => new Date().toISOString();
+const randomToken = () => Math.random().toString(36).slice(2) + Date.now().toString(36);
 
 const numericRoomId = (roomKey) => {
   const n = Number(roomKey);
@@ -87,6 +90,52 @@ const server = createServer(async (req, res) => {
   const { pathname = '', query = {} } = parseUrl(req.url, true);
   if (pathname === '/health') {
     sendJson(res, 200, { ok: true, now: nowIso() });
+    return;
+  }
+
+  if (pathname === '/v1/auth/register' && req.method === 'POST') {
+    const body = await readJsonBody(req).catch(() => null);
+    if (!body) {
+      sendJson(res, 400, { error: 'invalid json' });
+      return;
+    }
+    const account = String(body.account || '').trim();
+    const password = String(body.password || '').trim();
+    if (!account || !password) {
+      sendJson(res, 400, { error: 'account and password are required' });
+      return;
+    }
+    if (users.has(account)) {
+      sendJson(res, 409, { error: 'account already exists' });
+      return;
+    }
+    users.set(account, { account, password, created_at: nowIso() });
+    const accessToken = `demo_${randomToken()}`;
+    tokens.set(accessToken, { account, created_at: nowIso() });
+    sendJson(res, 200, { access_token: accessToken });
+    return;
+  }
+
+  if (pathname === '/v1/auth/login' && req.method === 'POST') {
+    const body = await readJsonBody(req).catch(() => null);
+    if (!body) {
+      sendJson(res, 400, { error: 'invalid json' });
+      return;
+    }
+    const account = String(body.account || '').trim();
+    const password = String(body.password || '').trim();
+    if (!account || !password) {
+      sendJson(res, 400, { error: 'account and password are required' });
+      return;
+    }
+    const user = users.get(account);
+    if (!user || user.password !== password) {
+      sendJson(res, 401, { error: 'invalid account or password' });
+      return;
+    }
+    const accessToken = `demo_${randomToken()}`;
+    tokens.set(accessToken, { account, created_at: nowIso() });
+    sendJson(res, 200, { access_token: accessToken });
     return;
   }
 

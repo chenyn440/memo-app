@@ -144,13 +144,13 @@ export const api = {
   setWebApiBaseUrl: (url: string) => setWebApiBaseUrl(url),
   getWebAuthToken: () => getWebAuthToken(),
   setWebAuthToken: (token: string) => setWebAuthToken(token),
-  sendAuthCode: (email: string) => webRequest<void>('/v1/auth/send-code', {
+  registerWithPassword: (account: string, password: string) => webRequest<{ access_token: string; refresh_token?: string }>('/v1/auth/register', {
     method: 'POST',
-    body: JSON.stringify({ email }),
+    body: JSON.stringify({ account, password }),
   }),
-  verifyAuthCode: (email: string, code: string) => webRequest<{ access_token: string; refresh_token?: string }>('/v1/auth/verify-code', {
+  loginWithPassword: (account: string, password: string) => webRequest<{ access_token: string; refresh_token?: string }>('/v1/auth/login', {
     method: 'POST',
-    body: JSON.stringify({ email, code }),
+    body: JSON.stringify({ account, password }),
   }),
   logoutWeb: () => {
     setWebAuthToken('');
