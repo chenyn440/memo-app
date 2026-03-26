@@ -1,0 +1,17 @@
+[Unit]
+Description=Memo App Meeting Signal Service
+After=network.target
+
+[Service]
+Type=simple
+WorkingDirectory=__PROJECT_DIR__
+Environment=NODE_ENV=production
+Environment=MEETING_SIGNAL_HOST=127.0.0.1
+Environment=MEETING_SIGNAL_PORT=__SIGNAL_PORT__
+ExecStart=/usr/bin/env npm run meeting:signal
+Restart=always
+RestartSec=3
+User=__RUN_USER__
+
+[Install]
+WantedBy=multi-user.target

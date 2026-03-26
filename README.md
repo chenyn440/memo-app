@@ -221,6 +221,32 @@ MEETING_SIGNAL_PORT=8787
 
 点击“保存配置”后即切到远程模式。两端填写同一服务地址 + 同一房间标识即可互通。
 
+## 腾讯云 Nginx 部署脚本
+
+已提供一键脚本（适用于 Ubuntu/CentOS 常见环境）：
+
+```bash
+sudo bash scripts/setup-meeting-signal-tencent.sh \
+  --domain meet.example.com \
+  --project-dir /opt/memo-app \
+  --run-user ubuntu \
+  --signal-port 8787
+```
+
+脚本会自动完成：
+
+- 安装 Nginx
+- 安装生产依赖（`npm install --omit=dev`）
+- 写入并启动 `meeting-signal` 的 systemd 服务
+- 写入并启用 Nginx 反代配置（`/` -> `127.0.0.1:8787`）
+- 重载 Nginx 并执行配置检测
+
+模板文件：
+
+- `scripts/nginx-meeting-signal.conf.template`
+- `scripts/meeting-signal.service.template`
+- `scripts/setup-meeting-signal-tencent.sh`
+
 ## 正式打包（macOS + Windows）
 
 仓库内置 GitHub Actions 工作流：`.github/workflows/release-bundles.yml`
