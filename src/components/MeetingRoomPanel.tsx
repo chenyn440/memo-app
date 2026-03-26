@@ -41,6 +41,7 @@ interface FaceAnchor {
 
 interface MeetingChatMessage {
   id: string;
+  peerId: string;
   senderName: string;
   text: string;
   createdAt: string;
@@ -540,6 +541,7 @@ export function MeetingRoomPanel({
           ...prev,
           {
             id,
+            peerId: remotePeerId,
             senderName,
             text,
             createdAt: String(payload?.createdAt ?? signal.created_at),
@@ -591,28 +593,24 @@ export function MeetingRoomPanel({
   const sendChatMessage = async () => {
     const text = chatInput.trim();
     if (!text) return;
-    const targetPeer = selectedChatPeerId
-      ? meetingPeers.find((peer) => peer.peer_id === selectedChatPeerId)
-      : null;
-    if (selectedChatPeerId && !targetPeer) {
+    if (!selectedChatPeerId) {
+      showToast('请先选择参会人', 'info');
+      return;
+    }
+    const targetPeer = meetingPeers.find((peer) => peer.peer_id === selectedChatPeerId);
+    if (!targetPeer) {
       showToast('目标参会人已离线', 'info');
       setSelectedChatPeerId(null);
       return;
     }
-    const receivers = targetPeer
-      ? [targetPeer]
-      : meetingPeers.filter((peer) => peer.peer_id !== localPeerIdRef.current);
-    if (receivers.length === 0) {
-      showToast('当前没有在线对方，消息暂未发送', 'info');
-      return;
-    }
     const senderName = userName.trim() || '我';
     const createdAt = new Date().toISOString();
-    const payload = { text, senderName, createdAt, toPeerId: targetPeer?.peer_id ?? null };
+    const payload = { text, senderName, createdAt, toPeerId: targetPeer.peer_id };
     setChatMessages((prev) => [
       ...prev,
       {
         id: `local-${Date.now()}`,
+        peerId: targetPeer.peer_id,
         senderName,
         text,
         createdAt,
@@ -620,13 +618,10 @@ export function MeetingRoomPanel({
       },
     ]);
     setChatInput('');
-    const tasks = receivers.map((peer) =>
-      publishSignal(peer.peer_id, 'chat', payload).catch((error) => {
-        console.warn('Failed to send chat signal:', error);
-      })
-    );
-    await Promise.all(tasks);
-    showToast(targetPeer ? `已发送给 ${targetPeer.user_name}` : '消息已发送', 'success');
+    await publishSignal(targetPeer.peer_id, 'chat', payload).catch((error) => {
+      console.warn('Failed to send chat signal:', error);
+    });
+    showToast(`已发送给 ${targetPeer.user_name}`, 'success');
   };
 
   useEffect(() => {
@@ -960,6 +955,10 @@ export function MeetingRoomPanel({
     if (!selectedChatPeerId) return null;
     return participantItems.find((item) => item.id === selectedChatPeerId)?.name ?? null;
   }, [participantItems, selectedChatPeerId]);
+  const selectedPeerChatMessages = useMemo(() => {
+    if (!selectedChatPeerId) return [];
+    return chatMessages.filter((message) => message.peerId === selectedChatPeerId);
+  }, [chatMessages, selectedChatPeerId]);
 
   useEffect(() => {
     if (!chatListRef.current) return;
@@ -2090,30 +2089,60 @@ export function MeetingRoomPanel({
             {mediaError && <p className="meeting-room-media-error">{mediaError}</p>}
           </div>
           <aside className="meeting-participants-sidebar">
-            <div className="meeting-participants-title">参会人员（{participantItems.length}）</div>
-            <div className="meeting-participants-list">
-              {participantItems.map((item) => (
-                <button
-                  key={item.id}
-                  type="button"
-                  className={`meeting-participant-row ${item.isSelf ? 'is-self' : ''} ${selectedChatPeerId === item.id ? 'selected' : ''}`}
-                  disabled={item.isSelf}
-                  onClick={() => {
-                    if (item.isSelf) return;
-                    setSelectedChatPeerId(item.id);
-                  }}
-                >
-                  <span className="meeting-participant-name">{item.name}</span>
-                  <span className={`meeting-participant-status ${item.status}`}>
-                    <i />
-                    在线
-                  </span>
-                </button>
-              ))}
-            </div>
-            {selectedChatPeerId && selectedChatPeerName && (
+            {!selectedChatPeerId || !selectedChatPeerName ? (
+              <>
+                <div className="meeting-participants-title">参会人员（{participantItems.length}）</div>
+                <div className="meeting-participants-list">
+                  {participantItems.map((item) => (
+                    <button
+                      key={item.id}
+                      type="button"
+                      className={`meeting-participant-row ${item.isSelf ? 'is-self' : ''}`}
+                      disabled={item.isSelf}
+                      onClick={() => {
+                        if (item.isSelf) return;
+                        setSelectedChatPeerId(item.id);
+                        setChatInput('');
+                      }}
+                    >
+                      <span className="meeting-participant-name">{item.name}</span>
+                      <span className={`meeting-participant-status ${item.status}`}>
+                        <i />
+                        在线
+                      </span>
+                    </button>
+                  ))}
+                </div>
+              </>
+            ) : (
               <div className="meeting-participant-chat-box">
-                <div className="meeting-participant-chat-title">发消息给 {selectedChatPeerName}</div>
+                <div className="meeting-participant-chat-head">
+                  <button
+                    type="button"
+                    className="meeting-room-info-toggle"
+                    onClick={() => {
+                      setSelectedChatPeerId(null);
+                      setChatInput('');
+                    }}
+                  >
+                    返回
+                  </button>
+                  <div className="meeting-participant-chat-title">{selectedChatPeerName}</div>
+                </div>
+                <div ref={chatListRef} className="meeting-participant-chat-list">
+                  {selectedPeerChatMessages.length === 0 ? (
+                    <span className="meeting-chat-empty">暂无消息</span>
+                  ) : (
+                    selectedPeerChatMessages.map((message) => (
+                      <div key={message.id} className={`meeting-chat-item ${message.isSelf ? 'self' : ''}`}>
+                        <div className="meeting-chat-meta">
+                          <span>{message.senderName}</span>
+                        </div>
+                        <div className="meeting-chat-bubble">{message.text}</div>
+                      </div>
+                    ))
+                  )}
+                </div>
                 <div className="meeting-chat-input-row">
                   <input
                     value={chatInput}
@@ -2145,29 +2174,57 @@ export function MeetingRoomPanel({
                   关闭
                 </button>
               </div>
-              <div className="meeting-participants-list">
-                {participantItems.map((item) => (
-                  <button
-                    key={item.id}
-                    type="button"
-                    className={`meeting-participant-row ${item.isSelf ? 'is-self' : ''} ${selectedChatPeerId === item.id ? 'selected' : ''}`}
-                    disabled={item.isSelf}
-                    onClick={() => {
-                      if (item.isSelf) return;
-                      setSelectedChatPeerId(item.id);
-                    }}
-                  >
-                    <span className="meeting-participant-name">{item.name}</span>
-                    <span className={`meeting-participant-status ${item.status}`}>
-                      <i />
-                      在线
-                    </span>
-                  </button>
-                ))}
-              </div>
-              {selectedChatPeerId && selectedChatPeerName && (
+              {!selectedChatPeerId || !selectedChatPeerName ? (
+                <div className="meeting-participants-list">
+                  {participantItems.map((item) => (
+                    <button
+                      key={item.id}
+                      type="button"
+                      className={`meeting-participant-row ${item.isSelf ? 'is-self' : ''}`}
+                      disabled={item.isSelf}
+                      onClick={() => {
+                        if (item.isSelf) return;
+                        setSelectedChatPeerId(item.id);
+                        setChatInput('');
+                      }}
+                    >
+                      <span className="meeting-participant-name">{item.name}</span>
+                      <span className={`meeting-participant-status ${item.status}`}>
+                        <i />
+                        在线
+                      </span>
+                    </button>
+                  ))}
+                </div>
+              ) : (
                 <div className="meeting-participant-chat-box">
-                  <div className="meeting-participant-chat-title">发消息给 {selectedChatPeerName}</div>
+                  <div className="meeting-participant-chat-head">
+                    <button
+                      type="button"
+                      className="meeting-room-info-toggle"
+                      onClick={() => {
+                        setSelectedChatPeerId(null);
+                        setChatInput('');
+                      }}
+                    >
+                      返回
+                    </button>
+                    <div className="meeting-participant-chat-title">{selectedChatPeerName}</div>
+                  </div>
+                  <div className="meeting-participant-chat-list">
+                    {selectedPeerChatMessages.length === 0 ? (
+                      <span className="meeting-chat-empty">暂无消息</span>
+                    ) : (
+                      selectedPeerChatMessages.map((message) => (
+                        <div key={message.id} className={`meeting-chat-item ${message.isSelf ? 'self' : ''}`}>
+                          <div className="meeting-chat-meta">
+                            <span>{message.senderName}</span>
+                          </div>
+                          <div className="meeting-chat-bubble">{message.text}</div>
+                        </div>
+                      ))
+                    )}
+                  </div>
                   <div className="meeting-chat-input-row">
                     <input
                       value={chatInput}
