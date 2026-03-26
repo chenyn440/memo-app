@@ -71,6 +71,19 @@ function WebPortalApp() {
     return () => window.removeEventListener('popstate', handlePop);
   }, []);
 
+  useEffect(() => {
+    if (path !== '/join') return;
+    const params = new URLSearchParams(window.location.search);
+    const roomFromQuery = params.get('room')?.trim();
+    const nameFromQuery = params.get('name')?.trim();
+    if (roomFromQuery) {
+      setRoomKey(roomFromQuery);
+    }
+    if (nameFromQuery) {
+      setDisplayName(nameFromQuery);
+    }
+  }, [path]);
+
   const importInvite = () => {
     const raw = inviteText.trim();
     if (!raw) {

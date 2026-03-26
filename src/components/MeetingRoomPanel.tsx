@@ -42,6 +42,7 @@ interface FaceAnchor {
 const BEAUTY_STORAGE_KEY = 'meeting_beauty_v1';
 const SIGNAL_ROOM_KEY_STORAGE_KEY = 'meeting_signal_room_key';
 const FIXED_REMOTE_SIGNAL_SERVER_URL = 'https://aiyn.cloud:8081';
+const FIXED_WEB_JOIN_BASE_URL = 'https://aiyn.cloud:8081';
 
 const BEAUTY_PRESET_TUNING: Record<BeautyPreset, BeautyTuning> = {
   natural: { faceSlim: 22, eyeEnlarge: 18, skinSmooth: 28 },
@@ -345,7 +346,6 @@ export function MeetingRoomPanel({
     audioCtxRef.current = new Ctor();
     return audioCtxRef.current;
   };
-  const signalServerUrl = FIXED_REMOTE_SIGNAL_SERVER_URL;
   const signalingRoomIdOrKey: string = signalRoomKey.trim() || currentRoom.room_code || String(currentRoom.id);
 
   const saveSignalRoomConfig = () => {
@@ -357,19 +357,13 @@ export function MeetingRoomPanel({
 
   const copyInviteInfo = async () => {
     const roomKey = signalRoomKey.trim() || currentRoom.room_code || String(currentRoom.id);
-    const inviteText = [
-      `会议名称：${currentRoom.room_name}`,
-      `会议房间码：${currentRoom.room_code}`,
-      `信令服务：${signalServerUrl}`,
-      `房间标识：${roomKey}`,
-      '使用方式：在会议页右侧填写房间标识后保存。',
-    ].join('\n');
+    const joinUrl = `${FIXED_WEB_JOIN_BASE_URL.replace(/\/+$/, '')}/join?room=${encodeURIComponent(roomKey)}`;
     try {
       if (navigator.clipboard?.writeText) {
-        await navigator.clipboard.writeText(inviteText);
+        await navigator.clipboard.writeText(joinUrl);
       } else {
         const textarea = document.createElement('textarea');
-        textarea.value = inviteText;
+        textarea.value = joinUrl;
         textarea.style.position = 'fixed';
         textarea.style.opacity = '0';
         document.body.appendChild(textarea);
@@ -377,7 +371,7 @@ export function MeetingRoomPanel({
         document.execCommand('copy');
         document.body.removeChild(textarea);
       }
-      showToast('邀请信息已复制', 'success');
+      showToast('网页版入会链接已复制', 'success');
     } catch (error) {
       console.error('Failed to copy invite info:', error);
       showToast('复制失败，请手动复制', 'error');
@@ -389,6 +383,22 @@ export function MeetingRoomPanel({
     if (!raw) {
       showToast('请先粘贴邀请内容', 'error');
       return;
+    }
+    const joinLinkMatch = raw.match(/https?:\/\/[^\s]+\/join\?[^\s]+/);
+    if (joinLinkMatch?.[0]) {
+      try {
+        const url = new URL(joinLinkMatch[0]);
+        const fromLink = url.searchParams.get('room')?.trim();
+        if (fromLink) {
+          setSignalRoomKey(fromLink);
+          localStorage.setItem(SIGNAL_ROOM_KEY_STORAGE_KEY, fromLink);
+          setInviteRawText('');
+          showToast('已从链接导入房间标识', 'success');
+          return;
+        }
+      } catch {
+        // ignore and fallback to text parsing
+      }
     }
     const roomKeyMatch = raw.match(/房间标识[：:]\s*([^\n\r]+)/);
     const roomKey = roomKeyMatch?.[1]?.trim();
@@ -1821,7 +1831,8 @@ export function MeetingRoomPanel({
             <video ref={localVideoRef} autoPlay playsInline muted className="meeting-local-video-source" />
             <canvas
               ref={localCanvasRef}
-              className={`meeting-local-canvas ${screenSharing ? '' : 'mirrored'}`}
+              className="meeting-local-canvas"
+              style={{ transform: screenSharing ? 'none' : 'scaleX(-1)' }}
             />
             {!cameraEnabled && !screenSharing && (
               <div className="meeting-local-placeholder">
