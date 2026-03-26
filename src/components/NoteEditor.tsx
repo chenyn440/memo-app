@@ -67,11 +67,22 @@ function formatUpdatedAt(dateStr: string): string {
   return `${year}/${month}/${day} ${hours}:${minutes}`;
 }
 
-function isMacOS(): boolean {
-  if (typeof window === 'undefined') return false;
-  const ua = window.navigator.userAgent;
-  const platform = window.navigator.platform;
-  return /Mac|Macintosh|Mac OS X/i.test(ua) || /Mac/i.test(platform);
+type WebSpeechRecognitionCtor = new () => {
+  lang: string;
+  continuous: boolean;
+  interimResults: boolean;
+  maxAlternatives: number;
+  onresult: ((event: any) => void) | null;
+  onerror: ((event: any) => void) | null;
+  onend: (() => void) | null;
+  start: () => void;
+  stop: () => void;
+};
+
+function getWebSpeechRecognitionCtor(): WebSpeechRecognitionCtor | null {
+  if (typeof window === 'undefined') return null;
+  const w = window as any;
+  return (w.SpeechRecognition || w.webkitSpeechRecognition || null) as WebSpeechRecognitionCtor | null;
 }
 
 function getFolderOptions(folders: Folder[]) {
@@ -151,8 +162,12 @@ export const NoteEditor = forwardRef<NoteEditorHandle, NoteEditorProps>(function
   const lastSavedRef = useRef<{ title: string; content: string }>({ title: '', content: '' });
   const applyingRemoteContentRef = useRef(false);
   const latestTranslationsRef = useRef<string>(note?.translations || '{}');
+  const webSpeechRecognitionRef = useRef<InstanceType<WebSpeechRecognitionCtor> | null>(null);
+  const webSpeechLastFinalRef = useRef('');
   const { aiConfig, setAIConfig, currentLanguage, setCurrentLanguage, setSelectedNote } = useStore();
-  const speechSupported = isMacOS();
+  const tauriRuntime = api.isTauriRuntime();
+  const webSpeechCtor = tauriRuntime ? null : getWebSpeechRecognitionCtor();
+  const speechSupported = tauriRuntime || Boolean(webSpeechCtor);
   const folderOptions = getFolderOptions(folders);
   const currentFolder = folderOptions.find((opt) => opt.id === (note?.folder_id ?? null)) ?? folderOptions[0];
   const noteSourceFingerprint = note ? computeSourceFingerprint(note.title, note.content) : '';
@@ -439,13 +454,103 @@ export const NoteEditor = forwardRef<NoteEditorHandle, NoteEditorProps>(function
     try { await onDelete(note.id); } catch { showToast('删除失败', 'error'); } finally { setIsDeleting(false); }
   };
 
-  const toggleSpeech = async () => {
-    if (!speechSupported) { showToast('仅支持 macOS', 'info'); return; }
+  const stopWebSpeech = useCallback(() => {
+    const current = webSpeechRecognitionRef.current;
+    if (!current) return;
+    current.onresult = null;
+    current.onerror = null;
+    current.onend = null;
     try {
-      if (isListening) { await api.stopSpeech(); setIsListening(false); }
-      else { await api.startSpeech(); setIsListening(true); }
-    } catch { showToast('语音启动失败', 'error'); }
+      current.stop();
+    } catch {
+      // ignore
+    }
+    webSpeechRecognitionRef.current = null;
+  }, []);
+
+  const startWebSpeech = useCallback(() => {
+    if (!webSpeechCtor) throw new Error('当前浏览器不支持语音识别');
+    if (!editor) throw new Error('编辑器未就绪');
+    stopWebSpeech();
+    const recognition = new webSpeechCtor();
+    recognition.lang = 'zh-CN';
+    recognition.continuous = true;
+    recognition.interimResults = true;
+    recognition.maxAlternatives = 1;
+    recognition.onresult = (event: any) => {
+      let finalText = '';
+      for (let i = event.resultIndex; i < event.results.length; i += 1) {
+        const result = event.results[i];
+        const text = String(result?.[0]?.transcript || '').trim();
+        if (!text) continue;
+        if (result.isFinal) finalText += text;
+      }
+      const normalized = finalText.trim();
+      if (!normalized || normalized === webSpeechLastFinalRef.current) return;
+      webSpeechLastFinalRef.current = normalized;
+      editor.chain().focus().insertContent(normalized).run();
+    };
+    recognition.onerror = (event: any) => {
+      const code = String(event?.error || '');
+      if (code === 'not-allowed' || code === 'service-not-allowed') {
+        showToast('麦克风权限被拒绝', 'error');
+      } else if (code === 'audio-capture') {
+        showToast('未检测到可用麦克风', 'error');
+      } else if (code === 'no-speech') {
+        showToast('未检测到语音输入', 'info');
+      } else {
+        showToast('语音识别失败', 'error');
+      }
+      webSpeechRecognitionRef.current = null;
+      setIsListening(false);
+    };
+    recognition.onend = () => {
+      webSpeechRecognitionRef.current = null;
+      setIsListening(false);
+    };
+    recognition.start();
+    webSpeechRecognitionRef.current = recognition;
+    webSpeechLastFinalRef.current = '';
+    setIsListening(true);
+  }, [editor, stopWebSpeech, webSpeechCtor]);
+
+  const toggleSpeech = async () => {
+    if (!speechSupported) { showToast('当前环境不支持语音输入', 'info'); return; }
+    try {
+      if (isListening) {
+        if (tauriRuntime) await api.stopSpeech();
+        else stopWebSpeech();
+        setIsListening(false);
+      } else if (tauriRuntime) {
+        await api.startSpeech();
+        setIsListening(true);
+      } else {
+        startWebSpeech();
+      }
+    } catch (error: any) {
+      showToast(error?.message || '语音启动失败', 'error');
+      if (!tauriRuntime) stopWebSpeech();
+      setIsListening(false);
+    }
   };
+
+  useEffect(() => {
+    if (!isListening) return;
+    if (tauriRuntime) {
+      void api.stopSpeech().catch(() => {}).finally(() => setIsListening(false));
+    } else {
+      stopWebSpeech();
+      setIsListening(false);
+    }
+  }, [note?.id]);
+
+  useEffect(() => () => {
+    if (tauriRuntime) {
+      void api.stopSpeech().catch(() => {});
+    } else {
+      stopWebSpeech();
+    }
+  }, [stopWebSpeech, tauriRuntime]);
 
   const handleFolderChange = async (folderIdValue: string) => {
     if (!note) return;
