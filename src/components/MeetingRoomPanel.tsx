@@ -2093,15 +2093,43 @@ export function MeetingRoomPanel({
             <div className="meeting-participants-title">参会人员（{participantItems.length}）</div>
             <div className="meeting-participants-list">
               {participantItems.map((item) => (
-                <div key={item.id} className="meeting-participant-row">
+                <button
+                  key={item.id}
+                  type="button"
+                  className={`meeting-participant-row ${item.isSelf ? 'is-self' : ''} ${selectedChatPeerId === item.id ? 'selected' : ''}`}
+                  disabled={item.isSelf}
+                  onClick={() => {
+                    if (item.isSelf) return;
+                    setSelectedChatPeerId(item.id);
+                  }}
+                >
                   <span className="meeting-participant-name">{item.name}</span>
                   <span className={`meeting-participant-status ${item.status}`}>
                     <i />
                     在线
                   </span>
-                </div>
+                </button>
               ))}
             </div>
+            {selectedChatPeerId && selectedChatPeerName && (
+              <div className="meeting-participant-chat-box">
+                <div className="meeting-participant-chat-title">发消息给 {selectedChatPeerName}</div>
+                <div className="meeting-chat-input-row">
+                  <input
+                    value={chatInput}
+                    onChange={(e) => setChatInput(e.target.value)}
+                    placeholder="输入私聊消息..."
+                    onKeyDown={(e) => {
+                      if (e.key === 'Enter' && !e.shiftKey) {
+                        e.preventDefault();
+                        void sendChatMessage();
+                      }
+                    }}
+                  />
+                  <button type="button" onClick={() => void sendChatMessage()}>发送</button>
+                </div>
+              </div>
+            )}
           </aside>
         </div>
         {participantDrawerOpen && (
@@ -2119,15 +2147,43 @@ export function MeetingRoomPanel({
               </div>
               <div className="meeting-participants-list">
                 {participantItems.map((item) => (
-                  <div key={item.id} className="meeting-participant-row">
+                  <button
+                    key={item.id}
+                    type="button"
+                    className={`meeting-participant-row ${item.isSelf ? 'is-self' : ''} ${selectedChatPeerId === item.id ? 'selected' : ''}`}
+                    disabled={item.isSelf}
+                    onClick={() => {
+                      if (item.isSelf) return;
+                      setSelectedChatPeerId(item.id);
+                    }}
+                  >
                     <span className="meeting-participant-name">{item.name}</span>
                     <span className={`meeting-participant-status ${item.status}`}>
                       <i />
                       在线
                     </span>
-                  </div>
+                  </button>
                 ))}
               </div>
+              {selectedChatPeerId && selectedChatPeerName && (
+                <div className="meeting-participant-chat-box">
+                  <div className="meeting-participant-chat-title">发消息给 {selectedChatPeerName}</div>
+                  <div className="meeting-chat-input-row">
+                    <input
+                      value={chatInput}
+                      onChange={(e) => setChatInput(e.target.value)}
+                      placeholder="输入私聊消息..."
+                      onKeyDown={(e) => {
+                        if (e.key === 'Enter' && !e.shiftKey) {
+                          e.preventDefault();
+                          void sendChatMessage();
+                        }
+                      }}
+                    />
+                    <button type="button" onClick={() => void sendChatMessage()}>发送</button>
+                  </div>
+                </div>
+              )}
             </div>
           </div>
         )}
