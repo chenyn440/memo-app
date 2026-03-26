@@ -341,20 +341,6 @@ export function MeetingRoomPanel({
     setBeautyTuning(BEAUTY_PRESET_TUNING[preset]);
   };
 
-  const requestTileFullscreen = (target: EventTarget | null) => {
-    const el = target as HTMLElement | null;
-    if (!el) return;
-    const fullscreenEl = el.closest('.meeting-video-tile') as any;
-    if (!fullscreenEl) return;
-    if (typeof fullscreenEl.requestFullscreen === 'function') {
-      void fullscreenEl.requestFullscreen().catch(() => undefined);
-      return;
-    }
-    if (typeof fullscreenEl.webkitRequestFullscreen === 'function') {
-      fullscreenEl.webkitRequestFullscreen();
-    }
-  };
-
   const resumeRemoteAudioPlayback = async () => {
     const nodes = Array.from(document.querySelectorAll<HTMLVideoElement>('.meeting-remote-video'));
     if (nodes.length === 0) return;
