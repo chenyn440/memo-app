@@ -39,6 +39,14 @@ interface FaceAnchor {
   rightEye: { x: number; y: number };
 }
 
+interface MeetingChatMessage {
+  id: string;
+  senderName: string;
+  text: string;
+  createdAt: string;
+  isSelf: boolean;
+}
+
 const BEAUTY_STORAGE_KEY = 'meeting_beauty_v1';
 const SIGNAL_ROOM_KEY_STORAGE_KEY = 'meeting_signal_room_key';
 const FIXED_REMOTE_SIGNAL_SERVER_URL = 'https://aiyn.cloud:8081';
@@ -152,8 +160,11 @@ export function MeetingRoomPanel({
   const [localStream, setLocalStream] = useState<MediaStream | null>(null);
   const [displayStream, setDisplayStream] = useState<MediaStream | null>(null);
   const [mediaError, setMediaError] = useState<string | null>(null);
+  const [chatInput, setChatInput] = useState('');
+  const [chatMessages, setChatMessages] = useState<MeetingChatMessage[]>([]);
   const localVideoRef = useRef<HTMLVideoElement | null>(null);
   const localCanvasRef = useRef<HTMLCanvasElement | null>(null);
+  const chatListRef = useRef<HTMLDivElement | null>(null);
   const beautyTabRef = useRef<HTMLDivElement | null>(null);
   const displayStreamRef = useRef<MediaStream | null>(null);
   const acquiredStreamsRef = useRef<Set<MediaStream>>(new Set());
@@ -548,7 +559,6 @@ export function MeetingRoomPanel({
 
   const handleSignal = async (signal: MeetingSignal) => {
     const remotePeerId = signal.from_peer_id;
-    const pc = ensurePeerConnection(remotePeerId);
     let payload: any = null;
     try {
       payload = JSON.parse(signal.payload);
@@ -556,6 +566,28 @@ export function MeetingRoomPanel({
       return;
     }
 
+    if (signal.signal_type === 'chat') {
+      const text = String(payload?.text ?? '').trim();
+      if (!text) return;
+      const senderName = String(payload?.senderName ?? '').trim() || '对方';
+      setChatMessages((prev) => {
+        const id = `remote-${signal.id}`;
+        if (prev.some((item) => item.id === id)) return prev;
+        return [
+          ...prev,
+          {
+            id,
+            senderName,
+            text,
+            createdAt: String(payload?.createdAt ?? signal.created_at),
+            isSelf: false,
+          },
+        ];
+      });
+      return;
+    }
+
+    const pc = ensurePeerConnection(remotePeerId);
     if (signal.signal_type === 'offer') {
       await pc.setRemoteDescription(new RTCSessionDescription(payload));
       const answer = await pc.createAnswer();
@@ -590,6 +622,36 @@ export function MeetingRoomPanel({
       }
       await pc.addIceCandidate(payload).catch(() => undefined);
     }
+  };
+
+  const sendChatMessage = async () => {
+    const text = chatInput.trim();
+    if (!text) return;
+    const remotePeers = meetingPeers.filter((peer) => peer.peer_id !== localPeerIdRef.current);
+    if (remotePeers.length === 0) {
+      showToast('当前没有在线对方，消息暂未发送', 'info');
+      return;
+    }
+    const senderName = userName.trim() || '我';
+    const createdAt = new Date().toISOString();
+    const payload = { text, senderName, createdAt };
+    setChatMessages((prev) => [
+      ...prev,
+      {
+        id: `local-${Date.now()}`,
+        senderName,
+        text,
+        createdAt,
+        isSelf: true,
+      },
+    ]);
+    setChatInput('');
+    const tasks = remotePeers.map((peer) =>
+      publishSignal(peer.peer_id, 'chat', payload).catch((error) => {
+        console.warn('Failed to send chat signal:', error);
+      })
+    );
+    await Promise.all(tasks);
   };
 
   useEffect(() => {
@@ -878,6 +940,12 @@ export function MeetingRoomPanel({
   const onlineCount = isWebMode ? (remotePeerTiles.length + 1) : participants.length;
   const localDisplayName = (userName.trim() || '我').slice(0, 1).toUpperCase();
   const hasFocusedTile = Boolean(focusedTileId);
+  const isTwoPersonLayout = remotePeerTiles.length === 1 && !hasFocusedTile;
+
+  useEffect(() => {
+    if (!chatListRef.current) return;
+    chatListRef.current.scrollTop = chatListRef.current.scrollHeight;
+  }, [chatMessages]);
 
   useEffect(() => {
     if (!focusedTileId) return;
@@ -1821,7 +1889,7 @@ export function MeetingRoomPanel({
       </div>
 
       <div className="meeting-room-body">
-        <div className="meeting-room-video-grid">
+        <div className={`meeting-room-video-grid ${isTwoPersonLayout ? 'two-person-layout' : ''}`}>
           <div
             className={`meeting-video-tile meeting-video-tile-local meeting-video-tile-interactive ${focusedTileId === 'local' ? 'focused' : ''} ${hasFocusedTile && focusedTileId !== 'local' ? 'dimmed' : ''}`}
             onClick={() => setFocusedTileId((prev) => (prev === 'local' ? null : 'local'))}
@@ -1904,6 +1972,42 @@ export function MeetingRoomPanel({
               </div>
             );
           })}
+          {isTwoPersonLayout && (
+            <div className="meeting-chat-panel">
+              <div className="meeting-chat-header">聊天</div>
+              <div ref={chatListRef} className="meeting-chat-list">
+                {chatMessages.length === 0 ? (
+                  <span className="meeting-chat-empty">暂无消息</span>
+                ) : (
+                  chatMessages.map((message) => (
+                    <div
+                      key={message.id}
+                      className={`meeting-chat-item ${message.isSelf ? 'self' : ''}`}
+                    >
+                      <div className="meeting-chat-meta">
+                        <span>{message.senderName}</span>
+                      </div>
+                      <div className="meeting-chat-bubble">{message.text}</div>
+                    </div>
+                  ))
+                )}
+              </div>
+              <div className="meeting-chat-input-row">
+                <input
+                  value={chatInput}
+                  onChange={(e) => setChatInput(e.target.value)}
+                  placeholder="输入消息..."
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter' && !e.shiftKey) {
+                      e.preventDefault();
+                      void sendChatMessage();
+                    }
+                  }}
+                />
+                <button type="button" onClick={() => void sendChatMessage()}>发送</button>
+              </div>
+            </div>
+          )}
         </div>
         <div className={`meeting-room-info-float ${infoCollapsed ? 'collapsed' : ''}`}>
           <button

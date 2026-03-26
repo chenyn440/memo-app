@@ -213,7 +213,7 @@ export const api = {
     roomIdOrKey: number | string,
     fromPeerId: string,
     toPeerId: string,
-    signalType: 'offer' | 'answer' | 'ice',
+    signalType: 'offer' | 'answer' | 'ice' | 'chat',
     payload: string
   ) => {
     const signalServer = getSignalServerUrl();

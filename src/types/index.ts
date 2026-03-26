@@ -146,7 +146,7 @@ export interface MeetingSignal {
   room_id: number;
   from_peer_id: string;
   to_peer_id: string;
-  signal_type: 'offer' | 'answer' | 'ice';
+  signal_type: 'offer' | 'answer' | 'ice' | 'chat';
   payload: string;
   created_at: string;
 }
