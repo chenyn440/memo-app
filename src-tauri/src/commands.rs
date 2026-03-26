@@ -1,15 +1,86 @@
-use crate::models::{Note, Folder, Tag, CreateNoteInput, UpdateNoteInput};
+use crate::models::{
+    Note, Folder, Tag, CreateNoteInput, UpdateNoteInput,
+    Plan, PlanItem, CreatePlanInput, UpdatePlanInput, CreatePlanItemInput, UpdatePlanItemInput,
+    MeetingRoom, MeetingParticipant, MeetingPeer, MeetingSignal
+};
 use crate::AppState;
 use tauri::{State, Manager};
 use std::fs;
 use base64::Engine;
 use serde_json::json;
+use rusqlite::params;
+
+fn validate_optional_url(value: Option<&str>, field_name: &str) -> Result<(), String> {
+    if let Some(raw) = value {
+        let trimmed = raw.trim();
+        if trimmed.is_empty() {
+            return Ok(());
+        }
+        if !trimmed.starts_with("http://") && !trimmed.starts_with("https://") {
+            return Err(format!("{field_name} 必须是有效的 http/https 链接"));
+        }
+    }
+    Ok(())
+}
+
+fn map_meeting_room_row(row: &rusqlite::Row<'_>) -> Result<MeetingRoom, rusqlite::Error> {
+    Ok(MeetingRoom {
+        id: row.get(0)?,
+        plan_item_id: row.get(1)?,
+        room_code: row.get(2)?,
+        room_name: row.get(3)?,
+        state: row.get(4)?,
+        started_at: row.get(5)?,
+        ended_at: row.get(6)?,
+        created_at: row.get(7)?,
+        updated_at: row.get(8)?,
+    })
+}
+
+fn map_meeting_participant_row(row: &rusqlite::Row<'_>) -> Result<MeetingParticipant, rusqlite::Error> {
+    let is_online: i64 = row.get(3)?;
+    Ok(MeetingParticipant {
+        id: row.get(0)?,
+        room_id: row.get(1)?,
+        user_name: row.get(2)?,
+        is_online: is_online == 1,
+        joined_at: row.get(4)?,
+        left_at: row.get(5)?,
+    })
+}
+
+fn map_meeting_peer_row(row: &rusqlite::Row<'_>) -> Result<MeetingPeer, rusqlite::Error> {
+    let mic_on: i64 = row.get(4)?;
+    let camera_on: i64 = row.get(5)?;
+    Ok(MeetingPeer {
+        id: row.get(0)?,
+        room_id: row.get(1)?,
+        peer_id: row.get(2)?,
+        user_name: row.get(3)?,
+        mic_on: mic_on == 1,
+        camera_on: camera_on == 1,
+        joined_at: row.get(6)?,
+        last_seen_at: row.get(7)?,
+    })
+}
+
+fn map_meeting_signal_row(row: &rusqlite::Row<'_>) -> Result<MeetingSignal, rusqlite::Error> {
+    Ok(MeetingSignal {
+        id: row.get(0)?,
+        room_id: row.get(1)?,
+        from_peer_id: row.get(2)?,
+        to_peer_id: row.get(3)?,
+        signal_type: row.get(4)?,
+        payload: row.get(5)?,
+        created_at: row.get(6)?,
+    })
+}
 
 #[tauri::command]
 pub fn get_notes(state: State<AppState>) -> Result<Vec<Note>, String> {
     let conn = state.db.lock().map_err(|e| e.to_string())?;
     let mut stmt = conn
-        .prepare("SELECT id, title, content, folder_id, created_at, updated_at FROM notes ORDER BY updated_at DESC")
+        .prepare("SELECT id, title, content, folder_id, summary_history, translations, created_at, updated_at FROM notes ORDER BY updated_at DESC")
         .map_err(|e| e.to_string())?;
 
     let notes = stmt
@@ -19,8 +90,10 @@ pub fn get_notes(state: State<AppState>) -> Result<Vec<Note>, String> {
                 title: row.get(1)?,
                 content: row.get(2)?,
                 folder_id: row.get(3)?,
-                created_at: row.get(4)?,
-                updated_at: row.get(5)?,
+                summary_history: row.get(4)?,
+                translations: row.get(5)?,
+                created_at: row.get(6)?,
+                updated_at: row.get(7)?,
             })
         })
         .map_err(|e| e.to_string())?
@@ -48,6 +121,8 @@ pub fn create_note(input: CreateNoteInput, state: State<AppState>) -> Result<Not
         title: input.title,
         content: input.content,
         folder_id: input.folder_id,
+        summary_history: Some("[]".to_string()),
+        translations: None,
         created_at: now.clone(),
         updated_at: now,
     })
@@ -59,13 +134,13 @@ pub fn update_note(input: UpdateNoteInput, state: State<AppState>) -> Result<Not
     let now = chrono::Utc::now().to_rfc3339();
 
     conn.execute(
-        "UPDATE notes SET title = ?1, content = ?2, folder_id = ?3, updated_at = ?4 WHERE id = ?5",
-        (&input.title, &input.content, &input.folder_id, &now, &input.id),
+        "UPDATE notes SET title = ?1, content = ?2, folder_id = ?3, summary_history = ?4, translations = ?5, updated_at = ?6 WHERE id = ?7",
+        (&input.title, &input.content, &input.folder_id, &input.summary_history, &input.translations, &now, &input.id),
     )
     .map_err(|e| e.to_string())?;
 
     let mut stmt = conn
-        .prepare("SELECT id, title, content, folder_id, created_at, updated_at FROM notes WHERE id = ?1")
+        .prepare("SELECT id, title, content, folder_id, summary_history, translations, created_at, updated_at FROM notes WHERE id = ?1")
         .map_err(|e| e.to_string())?;
 
     let note = stmt
@@ -75,8 +150,10 @@ pub fn update_note(input: UpdateNoteInput, state: State<AppState>) -> Result<Not
                 title: row.get(1)?,
                 content: row.get(2)?,
                 folder_id: row.get(3)?,
-                created_at: row.get(4)?,
-                updated_at: row.get(5)?,
+                summary_history: row.get(4)?,
+                translations: row.get(5)?,
+                created_at: row.get(6)?,
+                updated_at: row.get(7)?,
             })
         })
         .map_err(|e| e.to_string())?;
@@ -110,7 +187,7 @@ pub fn search_notes(query: String, state: State<AppState>) -> Result<Vec<Note>, 
 
     let mut stmt = conn
         .prepare(
-            "SELECT n.id, n.title, n.content, n.folder_id, n.created_at, n.updated_at
+            "SELECT n.id, n.title, n.content, n.folder_id, n.summary_history, n.translations, n.created_at, n.updated_at
              FROM notes_fts f
              JOIN notes n ON n.id = f.rowid
              WHERE notes_fts MATCH ?1
@@ -125,8 +202,10 @@ pub fn search_notes(query: String, state: State<AppState>) -> Result<Vec<Note>, 
                 title: row.get(1)?,
                 content: row.get(2)?,
                 folder_id: row.get(3)?,
-                created_at: row.get(4)?,
-                updated_at: row.get(5)?,
+                summary_history: row.get(4)?,
+                translations: row.get(5)?,
+                created_at: row.get(6)?,
+                updated_at: row.get(7)?,
             })
         })
         .map_err(|e| e.to_string())?
@@ -163,7 +242,7 @@ pub fn get_folders(state: State<AppState>) -> Result<Vec<Folder>, String> {
 pub fn get_notes_by_folder(folder_id: i64, state: State<AppState>) -> Result<Vec<Note>, String> {
     let conn = state.db.lock().map_err(|e| e.to_string())?;
     let mut stmt = conn
-        .prepare("SELECT id, title, content, folder_id, created_at, updated_at FROM notes WHERE folder_id = ?1 ORDER BY updated_at DESC")
+        .prepare("SELECT id, title, content, folder_id, summary_history, translations, created_at, updated_at FROM notes WHERE folder_id = ?1 ORDER BY updated_at DESC")
         .map_err(|e| e.to_string())?;
 
     let notes = stmt
@@ -173,8 +252,10 @@ pub fn get_notes_by_folder(folder_id: i64, state: State<AppState>) -> Result<Vec
                 title: row.get(1)?,
                 content: row.get(2)?,
                 folder_id: row.get(3)?,
-                created_at: row.get(4)?,
-                updated_at: row.get(5)?,
+                summary_history: row.get(4)?,
+                translations: row.get(5)?,
+                created_at: row.get(6)?,
+                updated_at: row.get(7)?,
             })
         })
         .map_err(|e| e.to_string())?
@@ -385,7 +466,7 @@ pub fn remove_tag_from_note(note_id: i64, tag_id: i64, state: State<AppState>) -
 pub fn get_notes_by_tag(tag_id: i64, state: State<AppState>) -> Result<Vec<Note>, String> {
     let conn = state.db.lock().map_err(|e| e.to_string())?;
     let mut stmt = conn
-        .prepare("SELECT n.id, n.title, n.content, n.folder_id, n.created_at, n.updated_at FROM notes n INNER JOIN note_tags nt ON n.id = nt.note_id WHERE nt.tag_id = ?1 ORDER BY n.updated_at DESC")
+        .prepare("SELECT n.id, n.title, n.content, n.folder_id, n.summary_history, n.translations, n.created_at, n.updated_at FROM notes n INNER JOIN note_tags nt ON n.id = nt.note_id WHERE nt.tag_id = ?1 ORDER BY n.updated_at DESC")
         .map_err(|e| e.to_string())?;
 
     let notes = stmt
@@ -395,8 +476,10 @@ pub fn get_notes_by_tag(tag_id: i64, state: State<AppState>) -> Result<Vec<Note>
                 title: row.get(1)?,
                 content: row.get(2)?,
                 folder_id: row.get(3)?,
-                created_at: row.get(4)?,
-                updated_at: row.get(5)?,
+                summary_history: row.get(4)?,
+                translations: row.get(5)?,
+                created_at: row.get(6)?,
+                updated_at: row.get(7)?,
             })
         })
         .map_err(|e| e.to_string())?
@@ -493,7 +576,7 @@ fn markdown_to_plain_text(markdown: &str) -> String {
 pub fn export_note(note_id: i64, format: String, output_path: String, state: State<AppState>) -> Result<(), String> {
     let conn = state.db.lock().map_err(|e| e.to_string())?;
     let mut stmt = conn
-        .prepare("SELECT id, title, content, folder_id, created_at, updated_at FROM notes WHERE id = ?1")
+        .prepare("SELECT id, title, content, folder_id, summary_history, translations, created_at, updated_at FROM notes WHERE id = ?1")
         .map_err(|e| e.to_string())?;
 
     let note = stmt
@@ -503,8 +586,10 @@ pub fn export_note(note_id: i64, format: String, output_path: String, state: Sta
                 title: row.get(1)?,
                 content: row.get(2)?,
                 folder_id: row.get(3)?,
-                created_at: row.get(4)?,
-                updated_at: row.get(5)?,
+                summary_history: row.get(4)?,
+                translations: row.get(5)?,
+                created_at: row.get(6)?,
+                updated_at: row.get(7)?,
             })
         })
         .map_err(|e| e.to_string())?;
@@ -518,6 +603,7 @@ pub fn export_note(note_id: i64, format: String, output_path: String, state: Sta
             "title": note.title,
             "content": note.content,
             "folder_id": note.folder_id,
+            "summary_history": note.summary_history,
             "created_at": note.created_at,
             "updated_at": note.updated_at
         }))
@@ -568,4 +654,589 @@ pub fn load_image(path: String, app_handle: tauri::AppHandle) -> Result<String, 
     let image_data = fs::read(&canonical_file).map_err(|e| e.to_string())?;
     let base64_str = base64::engine::general_purpose::STANDARD.encode(&image_data);
     Ok(format!("data:image/png;base64,{}", base64_str))
+}
+
+#[tauri::command]
+pub fn get_plans(state: State<AppState>) -> Result<Vec<Plan>, String> {
+    let conn = state.db.lock().map_err(|e| e.to_string())?;
+    let mut stmt = conn
+        .prepare("SELECT id, name, plan_type, created_at, updated_at FROM plans ORDER BY updated_at DESC")
+        .map_err(|e| e.to_string())?;
+
+    let data = stmt
+        .query_map([], |row| {
+            Ok(Plan {
+                id: row.get(0)?,
+                name: row.get(1)?,
+                plan_type: row.get(2)?,
+                created_at: row.get(3)?,
+                updated_at: row.get(4)?,
+            })
+        })
+        .map_err(|e| e.to_string())?
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(|e| e.to_string())?;
+
+    Ok(data)
+}
+
+#[tauri::command]
+pub fn create_plan(input: CreatePlanInput, state: State<AppState>) -> Result<Plan, String> {
+    let conn = state.db.lock().map_err(|e| e.to_string())?;
+    let now = chrono::Utc::now().to_rfc3339();
+    conn.execute(
+        "INSERT INTO plans (name, plan_type, created_at, updated_at) VALUES (?1, ?2, ?3, ?4)",
+        (&input.name, &input.plan_type, &now, &now),
+    )
+    .map_err(|e| e.to_string())?;
+
+    Ok(Plan {
+        id: conn.last_insert_rowid(),
+        name: input.name,
+        plan_type: input.plan_type,
+        created_at: now.clone(),
+        updated_at: now,
+    })
+}
+
+#[tauri::command]
+pub fn update_plan(input: UpdatePlanInput, state: State<AppState>) -> Result<Plan, String> {
+    let conn = state.db.lock().map_err(|e| e.to_string())?;
+    let now = chrono::Utc::now().to_rfc3339();
+    let affected = conn
+        .execute(
+            "UPDATE plans SET name = ?1, plan_type = ?2, updated_at = ?3 WHERE id = ?4",
+            (&input.name, &input.plan_type, &now, &input.id),
+        )
+        .map_err(|e| e.to_string())?;
+    if affected == 0 {
+        return Err("计划不存在".to_string());
+    }
+
+    Ok(Plan {
+        id: input.id,
+        name: input.name,
+        plan_type: input.plan_type,
+        created_at: now.clone(),
+        updated_at: now,
+    })
+}
+
+#[tauri::command]
+pub fn delete_plan(id: i64, state: State<AppState>) -> Result<(), String> {
+    let conn = state.db.lock().map_err(|e| e.to_string())?;
+    conn.execute("DELETE FROM plans WHERE id = ?1", [id])
+        .map_err(|e| e.to_string())?;
+    Ok(())
+}
+
+#[tauri::command]
+pub fn get_plan_items(plan_id: i64, state: State<AppState>) -> Result<Vec<PlanItem>, String> {
+    let conn = state.db.lock().map_err(|e| e.to_string())?;
+    let mut stmt = conn
+        .prepare("SELECT id, plan_id, title, item_type, status, priority, owner, start_at, due_at, notes, linked_note_id, meeting_platform, meeting_url, meeting_id, meeting_password, meeting_attendees, meeting_recording_url, created_at, updated_at FROM plan_items WHERE plan_id = ?1 ORDER BY CASE status WHEN 'todo' THEN 0 WHEN 'in_progress' THEN 1 WHEN 'done' THEN 2 ELSE 3 END, COALESCE(due_at, '9999-12-31T23:59:59Z') ASC, updated_at DESC")
+        .map_err(|e| e.to_string())?;
+
+    let data = stmt
+        .query_map([plan_id], |row| {
+            Ok(PlanItem {
+                id: row.get(0)?,
+                plan_id: row.get(1)?,
+                title: row.get(2)?,
+                item_type: row.get(3)?,
+                status: row.get(4)?,
+                priority: row.get(5)?,
+                owner: row.get(6)?,
+                start_at: row.get(7)?,
+                due_at: row.get(8)?,
+                notes: row.get(9)?,
+                linked_note_id: row.get(10)?,
+                meeting_platform: row.get(11)?,
+                meeting_url: row.get(12)?,
+                meeting_id: row.get(13)?,
+                meeting_password: row.get(14)?,
+                meeting_attendees: row.get(15)?,
+                meeting_recording_url: row.get(16)?,
+                created_at: row.get(17)?,
+                updated_at: row.get(18)?,
+            })
+        })
+        .map_err(|e| e.to_string())?
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(|e| e.to_string())?;
+    Ok(data)
+}
+
+#[tauri::command]
+pub fn get_plan_items_by_date_range(start: String, end: String, state: State<AppState>) -> Result<Vec<PlanItem>, String> {
+    let conn = state.db.lock().map_err(|e| e.to_string())?;
+    let mut stmt = conn
+        .prepare("SELECT id, plan_id, title, item_type, status, priority, owner, start_at, due_at, notes, linked_note_id, meeting_platform, meeting_url, meeting_id, meeting_password, meeting_attendees, meeting_recording_url, created_at, updated_at FROM plan_items WHERE ((start_at IS NOT NULL AND start_at BETWEEN ?1 AND ?2) OR (due_at IS NOT NULL AND due_at BETWEEN ?1 AND ?2)) ORDER BY COALESCE(start_at, due_at) ASC")
+        .map_err(|e| e.to_string())?;
+
+    let data = stmt
+        .query_map([&start, &end], |row| {
+            Ok(PlanItem {
+                id: row.get(0)?,
+                plan_id: row.get(1)?,
+                title: row.get(2)?,
+                item_type: row.get(3)?,
+                status: row.get(4)?,
+                priority: row.get(5)?,
+                owner: row.get(6)?,
+                start_at: row.get(7)?,
+                due_at: row.get(8)?,
+                notes: row.get(9)?,
+                linked_note_id: row.get(10)?,
+                meeting_platform: row.get(11)?,
+                meeting_url: row.get(12)?,
+                meeting_id: row.get(13)?,
+                meeting_password: row.get(14)?,
+                meeting_attendees: row.get(15)?,
+                meeting_recording_url: row.get(16)?,
+                created_at: row.get(17)?,
+                updated_at: row.get(18)?,
+            })
+        })
+        .map_err(|e| e.to_string())?
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(|e| e.to_string())?;
+    Ok(data)
+}
+
+#[tauri::command]
+pub fn create_plan_item(input: CreatePlanItemInput, state: State<AppState>) -> Result<PlanItem, String> {
+    validate_optional_url(input.meeting_url.as_deref(), "会议链接")?;
+    validate_optional_url(input.meeting_recording_url.as_deref(), "录制链接")?;
+    let conn = state.db.lock().map_err(|e| e.to_string())?;
+    let now = chrono::Utc::now().to_rfc3339();
+    conn.execute(
+        "INSERT INTO plan_items (plan_id, title, item_type, status, priority, owner, start_at, due_at, notes, linked_note_id, meeting_platform, meeting_url, meeting_id, meeting_password, meeting_attendees, meeting_recording_url, created_at, updated_at) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18)",
+        params![
+            &input.plan_id,
+            &input.title,
+            &input.item_type,
+            &input.status,
+            &input.priority,
+            &input.owner,
+            &input.start_at,
+            &input.due_at,
+            &input.notes,
+            &input.linked_note_id,
+            &input.meeting_platform,
+            &input.meeting_url,
+            &input.meeting_id,
+            &input.meeting_password,
+            &input.meeting_attendees,
+            &input.meeting_recording_url,
+            &now,
+            &now
+        ],
+    )
+    .map_err(|e| e.to_string())?;
+
+    Ok(PlanItem {
+        id: conn.last_insert_rowid(),
+        plan_id: input.plan_id,
+        title: input.title,
+        item_type: input.item_type,
+        status: input.status,
+        priority: input.priority,
+        owner: input.owner,
+        start_at: input.start_at,
+        due_at: input.due_at,
+        notes: input.notes,
+        linked_note_id: input.linked_note_id,
+        meeting_platform: input.meeting_platform,
+        meeting_url: input.meeting_url,
+        meeting_id: input.meeting_id,
+        meeting_password: input.meeting_password,
+        meeting_attendees: input.meeting_attendees,
+        meeting_recording_url: input.meeting_recording_url,
+        created_at: now.clone(),
+        updated_at: now,
+    })
+}
+
+#[tauri::command]
+pub fn update_plan_item(input: UpdatePlanItemInput, state: State<AppState>) -> Result<PlanItem, String> {
+    validate_optional_url(input.meeting_url.as_deref(), "会议链接")?;
+    validate_optional_url(input.meeting_recording_url.as_deref(), "录制链接")?;
+    let conn = state.db.lock().map_err(|e| e.to_string())?;
+    let now = chrono::Utc::now().to_rfc3339();
+    let affected = conn.execute(
+        "UPDATE plan_items SET title = ?1, item_type = ?2, status = ?3, priority = ?4, owner = ?5, start_at = ?6, due_at = ?7, notes = ?8, linked_note_id = ?9, meeting_platform = ?10, meeting_url = ?11, meeting_id = ?12, meeting_password = ?13, meeting_attendees = ?14, meeting_recording_url = ?15, updated_at = ?16 WHERE id = ?17",
+        params![
+            &input.title,
+            &input.item_type,
+            &input.status,
+            &input.priority,
+            &input.owner,
+            &input.start_at,
+            &input.due_at,
+            &input.notes,
+            &input.linked_note_id,
+            &input.meeting_platform,
+            &input.meeting_url,
+            &input.meeting_id,
+            &input.meeting_password,
+            &input.meeting_attendees,
+            &input.meeting_recording_url,
+            &now,
+            &input.id
+        ],
+    )
+    .map_err(|e| e.to_string())?;
+    if affected == 0 {
+        return Err("计划项不存在".to_string());
+    }
+
+    let mut stmt = conn
+        .prepare("SELECT id, plan_id, title, item_type, status, priority, owner, start_at, due_at, notes, linked_note_id, meeting_platform, meeting_url, meeting_id, meeting_password, meeting_attendees, meeting_recording_url, created_at, updated_at FROM plan_items WHERE id = ?1")
+        .map_err(|e| e.to_string())?;
+
+    let row = stmt
+        .query_row([input.id], |r| {
+            Ok(PlanItem {
+                id: r.get(0)?,
+                plan_id: r.get(1)?,
+                title: r.get(2)?,
+                item_type: r.get(3)?,
+                status: r.get(4)?,
+                priority: r.get(5)?,
+                owner: r.get(6)?,
+                start_at: r.get(7)?,
+                due_at: r.get(8)?,
+                notes: r.get(9)?,
+                linked_note_id: r.get(10)?,
+                meeting_platform: r.get(11)?,
+                meeting_url: r.get(12)?,
+                meeting_id: r.get(13)?,
+                meeting_password: r.get(14)?,
+                meeting_attendees: r.get(15)?,
+                meeting_recording_url: r.get(16)?,
+                created_at: r.get(17)?,
+                updated_at: r.get(18)?,
+            })
+        })
+        .map_err(|e| e.to_string())?;
+    Ok(row)
+}
+
+#[tauri::command]
+pub fn delete_plan_item(id: i64, state: State<AppState>) -> Result<(), String> {
+    let conn = state.db.lock().map_err(|e| e.to_string())?;
+    conn.execute("DELETE FROM plan_items WHERE id = ?1", [id])
+        .map_err(|e| e.to_string())?;
+    Ok(())
+}
+
+#[tauri::command]
+pub fn get_or_create_meeting_room(plan_item_id: i64, room_name: String, state: State<AppState>) -> Result<MeetingRoom, String> {
+    let conn = state.db.lock().map_err(|e| e.to_string())?;
+
+    let mut stmt = conn
+        .prepare("SELECT id, plan_item_id, room_code, room_name, state, started_at, ended_at, created_at, updated_at FROM meeting_rooms WHERE plan_item_id = ?1")
+        .map_err(|e| e.to_string())?;
+
+    if let Ok(room) = stmt.query_row([plan_item_id], map_meeting_room_row) {
+        return Ok(room);
+    }
+
+    let now = chrono::Utc::now().to_rfc3339();
+    let room_code = format!("room-{}-{}", plan_item_id, chrono::Utc::now().timestamp());
+    conn.execute(
+        "INSERT INTO meeting_rooms (plan_item_id, room_code, room_name, state, created_at, updated_at) VALUES (?1, ?2, ?3, 'idle', ?4, ?5)",
+        (&plan_item_id, &room_code, &room_name, &now, &now),
+    )
+    .map_err(|e| e.to_string())?;
+
+    Ok(MeetingRoom {
+        id: conn.last_insert_rowid(),
+        plan_item_id,
+        room_code,
+        room_name,
+        state: "idle".to_string(),
+        started_at: None,
+        ended_at: None,
+        created_at: now.clone(),
+        updated_at: now,
+    })
+}
+
+#[tauri::command]
+pub fn get_meeting_room(room_id: i64, state: State<AppState>) -> Result<MeetingRoom, String> {
+    let conn = state.db.lock().map_err(|e| e.to_string())?;
+    let mut stmt = conn
+        .prepare("SELECT id, plan_item_id, room_code, room_name, state, started_at, ended_at, created_at, updated_at FROM meeting_rooms WHERE id = ?1")
+        .map_err(|e| e.to_string())?;
+
+    stmt.query_row([room_id], map_meeting_room_row)
+        .map_err(|_| "会议房间不存在".to_string())
+}
+
+#[tauri::command]
+pub fn get_meeting_room_by_code(room_code: String, state: State<AppState>) -> Result<MeetingRoom, String> {
+    let conn = state.db.lock().map_err(|e| e.to_string())?;
+    let mut stmt = conn
+        .prepare("SELECT id, plan_item_id, room_code, room_name, state, started_at, ended_at, created_at, updated_at FROM meeting_rooms WHERE room_code = ?1")
+        .map_err(|e| e.to_string())?;
+
+    stmt.query_row([room_code], map_meeting_room_row)
+        .map_err(|_| "会议房间不存在".to_string())
+}
+
+#[tauri::command]
+pub fn start_meeting_room(room_id: i64, state: State<AppState>) -> Result<MeetingRoom, String> {
+    let conn = state.db.lock().map_err(|e| e.to_string())?;
+    let now = chrono::Utc::now().to_rfc3339();
+    let affected = conn
+        .execute(
+            "UPDATE meeting_rooms SET state = 'in_progress', started_at = COALESCE(started_at, ?1), ended_at = NULL, updated_at = ?2 WHERE id = ?3",
+            (&now, &now, &room_id),
+        )
+        .map_err(|e| e.to_string())?;
+    if affected == 0 {
+        return Err("会议房间不存在".to_string());
+    }
+    let mut stmt = conn
+        .prepare("SELECT id, plan_item_id, room_code, room_name, state, started_at, ended_at, created_at, updated_at FROM meeting_rooms WHERE id = ?1")
+        .map_err(|e| e.to_string())?;
+    stmt.query_row([room_id], map_meeting_room_row)
+        .map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub fn end_meeting_room(room_id: i64, state: State<AppState>) -> Result<MeetingRoom, String> {
+    let conn = state.db.lock().map_err(|e| e.to_string())?;
+    let now = chrono::Utc::now().to_rfc3339();
+    let affected = conn
+        .execute(
+            "UPDATE meeting_rooms SET state = 'ended', ended_at = ?1, updated_at = ?2 WHERE id = ?3",
+            (&now, &now, &room_id),
+        )
+        .map_err(|e| e.to_string())?;
+    if affected == 0 {
+        return Err("会议房间不存在".to_string());
+    }
+    let mut stmt = conn
+        .prepare("SELECT id, plan_item_id, room_code, room_name, state, started_at, ended_at, created_at, updated_at FROM meeting_rooms WHERE id = ?1")
+        .map_err(|e| e.to_string())?;
+    stmt.query_row([room_id], map_meeting_room_row)
+        .map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub fn issue_meeting_token(room_id: i64, user_name: String, state: State<AppState>) -> Result<String, String> {
+    let _room = get_meeting_room(room_id, state)?;
+    let payload = format!(
+        "{{\"room_id\":{},\"user\":\"{}\",\"issued_at\":\"{}\"}}",
+        room_id,
+        user_name.replace('"', ""),
+        chrono::Utc::now().to_rfc3339()
+    );
+    Ok(base64::engine::general_purpose::STANDARD.encode(payload))
+}
+
+#[tauri::command]
+pub fn join_meeting_room(room_id: i64, user_name: String, state: State<AppState>) -> Result<Vec<MeetingParticipant>, String> {
+    let conn = state.db.lock().map_err(|e| e.to_string())?;
+    let now = chrono::Utc::now().to_rfc3339();
+    let trimmed_user = user_name.trim();
+    if trimmed_user.is_empty() {
+        return Err("用户名不能为空".to_string());
+    }
+
+    conn.execute(
+        "UPDATE meeting_participants SET is_online = 0, left_at = ?1 WHERE room_id = ?2 AND user_name = ?3 AND is_online = 1",
+        (&now, &room_id, &trimmed_user),
+    )
+    .map_err(|e| e.to_string())?;
+
+    conn.execute(
+        "INSERT INTO meeting_participants (room_id, user_name, is_online, joined_at) VALUES (?1, ?2, 1, ?3)",
+        (&room_id, &trimmed_user, &now),
+    )
+    .map_err(|e| e.to_string())?;
+
+    let mut stmt = conn
+        .prepare("SELECT id, room_id, user_name, is_online, joined_at, left_at FROM meeting_participants WHERE room_id = ?1 AND is_online = 1 ORDER BY joined_at ASC")
+        .map_err(|e| e.to_string())?;
+    let participants = stmt
+        .query_map([room_id], map_meeting_participant_row)
+        .map_err(|e| e.to_string())?
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(|e| e.to_string())?;
+
+    Ok(participants)
+}
+
+#[tauri::command]
+pub fn leave_meeting_room(room_id: i64, user_name: String, state: State<AppState>) -> Result<Vec<MeetingParticipant>, String> {
+    let conn = state.db.lock().map_err(|e| e.to_string())?;
+    let now = chrono::Utc::now().to_rfc3339();
+    let trimmed_user = user_name.trim();
+    if trimmed_user.is_empty() {
+        return Err("用户名不能为空".to_string());
+    }
+
+    conn.execute(
+        "UPDATE meeting_participants SET is_online = 0, left_at = ?1 WHERE room_id = ?2 AND user_name = ?3 AND is_online = 1",
+        (&now, &room_id, &trimmed_user),
+    )
+    .map_err(|e| e.to_string())?;
+
+    let mut stmt = conn
+        .prepare("SELECT id, room_id, user_name, is_online, joined_at, left_at FROM meeting_participants WHERE room_id = ?1 AND is_online = 1 ORDER BY joined_at ASC")
+        .map_err(|e| e.to_string())?;
+    let participants = stmt
+        .query_map([room_id], map_meeting_participant_row)
+        .map_err(|e| e.to_string())?
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(|e| e.to_string())?;
+
+    Ok(participants)
+}
+
+#[tauri::command]
+pub fn list_meeting_participants(room_id: i64, state: State<AppState>) -> Result<Vec<MeetingParticipant>, String> {
+    let conn = state.db.lock().map_err(|e| e.to_string())?;
+    let mut stmt = conn
+        .prepare("SELECT id, room_id, user_name, is_online, joined_at, left_at FROM meeting_participants WHERE room_id = ?1 AND is_online = 1 ORDER BY joined_at ASC")
+        .map_err(|e| e.to_string())?;
+    let participants = stmt
+        .query_map([room_id], map_meeting_participant_row)
+        .map_err(|e| e.to_string())?
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(|e| e.to_string())?;
+    Ok(participants)
+}
+
+#[tauri::command]
+pub fn upsert_meeting_peer(
+    room_id: i64,
+    peer_id: String,
+    user_name: String,
+    mic_on: bool,
+    camera_on: bool,
+    state: State<AppState>
+) -> Result<MeetingPeer, String> {
+    let conn = state.db.lock().map_err(|e| e.to_string())?;
+    let now = chrono::Utc::now().to_rfc3339();
+    let trimmed_peer_id = peer_id.trim();
+    let trimmed_user = user_name.trim();
+    if trimmed_peer_id.is_empty() || trimmed_user.is_empty() {
+        return Err("peer_id 和 user_name 不能为空".to_string());
+    }
+
+    conn.execute(
+        "INSERT INTO meeting_peers (room_id, peer_id, user_name, mic_on, camera_on, joined_at, last_seen_at)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?6)
+         ON CONFLICT(peer_id) DO UPDATE SET
+           room_id = excluded.room_id,
+           user_name = excluded.user_name,
+           mic_on = excluded.mic_on,
+           camera_on = excluded.camera_on,
+           last_seen_at = excluded.last_seen_at",
+        (&room_id, &trimmed_peer_id, &trimmed_user, &(if mic_on { 1 } else { 0 }), &(if camera_on { 1 } else { 0 }), &now),
+    )
+    .map_err(|e| e.to_string())?;
+
+    let mut stmt = conn
+        .prepare("SELECT id, room_id, peer_id, user_name, mic_on, camera_on, joined_at, last_seen_at FROM meeting_peers WHERE peer_id = ?1")
+        .map_err(|e| e.to_string())?;
+    stmt.query_row([trimmed_peer_id], map_meeting_peer_row)
+        .map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub fn list_meeting_peers(room_id: i64, state: State<AppState>) -> Result<Vec<MeetingPeer>, String> {
+    let conn = state.db.lock().map_err(|e| e.to_string())?;
+    let now = chrono::Utc::now();
+    let stale_before = (now - chrono::Duration::seconds(20)).to_rfc3339();
+
+    conn.execute(
+        "DELETE FROM meeting_peers WHERE room_id = ?1 AND last_seen_at < ?2",
+        (&room_id, &stale_before),
+    )
+    .map_err(|e| e.to_string())?;
+
+    let mut stmt = conn
+        .prepare("SELECT id, room_id, peer_id, user_name, mic_on, camera_on, joined_at, last_seen_at FROM meeting_peers WHERE room_id = ?1 ORDER BY joined_at ASC")
+        .map_err(|e| e.to_string())?;
+    let peers = stmt
+        .query_map([room_id], map_meeting_peer_row)
+        .map_err(|e| e.to_string())?
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(|e| e.to_string())?;
+    Ok(peers)
+}
+
+#[tauri::command]
+pub fn leave_meeting_peer(room_id: i64, peer_id: String, state: State<AppState>) -> Result<(), String> {
+    let conn = state.db.lock().map_err(|e| e.to_string())?;
+    conn.execute(
+        "DELETE FROM meeting_peers WHERE room_id = ?1 AND peer_id = ?2",
+        (&room_id, &peer_id),
+    )
+    .map_err(|e| e.to_string())?;
+    Ok(())
+}
+
+#[tauri::command]
+pub fn publish_meeting_signal(
+    room_id: i64,
+    from_peer_id: String,
+    to_peer_id: String,
+    signal_type: String,
+    payload: String,
+    state: State<AppState>,
+) -> Result<MeetingSignal, String> {
+    let conn = state.db.lock().map_err(|e| e.to_string())?;
+    let now = chrono::Utc::now().to_rfc3339();
+    let from_peer_id = from_peer_id.trim();
+    let to_peer_id = to_peer_id.trim();
+    let signal_type = signal_type.trim();
+    if from_peer_id.is_empty() || to_peer_id.is_empty() || signal_type.is_empty() {
+        return Err("信令参数不能为空".to_string());
+    }
+    conn.execute(
+        "INSERT INTO meeting_signals (room_id, from_peer_id, to_peer_id, signal_type, payload, created_at)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+        (&room_id, &from_peer_id, &to_peer_id, &signal_type, &payload, &now),
+    )
+    .map_err(|e| e.to_string())?;
+    let inserted_id = conn.last_insert_rowid();
+    let mut stmt = conn
+        .prepare("SELECT id, room_id, from_peer_id, to_peer_id, signal_type, payload, created_at FROM meeting_signals WHERE id = ?1")
+        .map_err(|e| e.to_string())?;
+    stmt.query_row([inserted_id], map_meeting_signal_row)
+        .map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub fn pull_meeting_signals(room_id: i64, to_peer_id: String, since_id: i64, state: State<AppState>) -> Result<Vec<MeetingSignal>, String> {
+    let conn = state.db.lock().map_err(|e| e.to_string())?;
+    let now = chrono::Utc::now();
+    let stale_before = (now - chrono::Duration::minutes(10)).to_rfc3339();
+    conn.execute(
+        "DELETE FROM meeting_signals WHERE room_id = ?1 AND created_at < ?2",
+        (&room_id, &stale_before),
+    )
+    .map_err(|e| e.to_string())?;
+
+    let mut stmt = conn
+        .prepare(
+            "SELECT id, room_id, from_peer_id, to_peer_id, signal_type, payload, created_at
+             FROM meeting_signals
+             WHERE room_id = ?1 AND to_peer_id = ?2 AND id > ?3
+             ORDER BY id ASC",
+        )
+        .map_err(|e| e.to_string())?;
+    let signals = stmt
+        .query_map(params![room_id, to_peer_id, since_id], map_meeting_signal_row)
+        .map_err(|e| e.to_string())?
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(|e| e.to_string())?;
+    Ok(signals)
 }

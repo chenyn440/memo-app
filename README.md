@@ -175,6 +175,9 @@ npm install
 # 开发模式
 npm run tauri dev
 
+# 启动远程会议信令服务（跨设备开会）
+npm run meeting:signal
+
 # 编译语音助手（如需重新编译）
 swiftc -sdk /Library/Developer/CommandLineTools/SDKs/MacOSX15.2.sdk \
   -o src-tauri/speech_helper src-tauri/speech_helper.swift \
@@ -186,6 +189,37 @@ npm run tauri build
 # 仅构建 macOS 正式安装包（不签名）
 npm run tauri build -- --bundles app,dmg --no-sign --ci
 ```
+
+## 远程开会（跨设备）
+
+当前会议模块已支持“本地信令 / 远程信令”双模式：
+
+- 未配置远程地址：走本地 Tauri SQLite（仅本机调试）。
+- 配置远程地址：走 HTTP 信令服务（可跨设备）。
+
+### 1) 启动信令服务
+
+在一台可被其他设备访问的机器上运行：
+
+```bash
+npm run meeting:signal
+```
+
+可选环境变量：
+
+```bash
+MEETING_SIGNAL_HOST=0.0.0.0
+MEETING_SIGNAL_PORT=8787
+```
+
+### 2) 会议页配置
+
+在会议页面右侧“远程信令”区域填写：
+
+- 服务地址：例如 `http://你的IP:8787`
+- 房间标识：建议使用“共享房间码”（默认已自动填充）
+
+点击“保存配置”后即切到远程模式。两端填写同一服务地址 + 同一房间标识即可互通。
 
 ## 正式打包（macOS + Windows）
 
