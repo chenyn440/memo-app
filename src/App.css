@@ -677,6 +677,14 @@ button:active {
   margin-top: 1px;
 }
 
+.editor-speech-btn.listening {
+  background: var(--color-error);
+  color: var(--color-text-inverse);
+  border-color: transparent;
+  box-shadow: none;
+  animation: pulse 1.5s infinite;
+}
+
 .editor-icon-btn:disabled {
   opacity: 0.6;
   cursor: not-allowed;

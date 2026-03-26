@@ -166,6 +166,8 @@ export const NoteEditor = forwardRef<NoteEditorHandle, NoteEditorProps>(function
   const webSpeechLastFinalRef = useRef('');
   const webSpeechPendingInterimRef = useRef('');
   const webSpeechInterimTimerRef = useRef<number | null>(null);
+  const speechInsertQueueRef = useRef<Promise<void>>(Promise.resolve());
+  const speechRawFallbackNotifiedRef = useRef(false);
   const { aiConfig, setAIConfig, currentLanguage, setCurrentLanguage, setSelectedNote } = useStore();
   const tauriRuntime = api.isTauriRuntime();
   const webSpeechCtor = tauriRuntime ? null : getWebSpeechRecognitionCtor();
@@ -488,7 +490,23 @@ export const NoteEditor = forwardRef<NoteEditorHandle, NoteEditorProps>(function
       if (!text) return;
       if (text === webSpeechLastFinalRef.current) return;
       webSpeechLastFinalRef.current = text;
-      editor.chain().focus().insertContent(text).run();
+      speechInsertQueueRef.current = speechInsertQueueRef.current.then(async () => {
+        let output = text;
+        if (aiConfig.apiKey?.trim()) {
+          try {
+            const polished = await aiService.polishSpeech(text, aiConfig);
+            output = polished?.trim() || text;
+          } catch {
+            output = text;
+          }
+        } else if (!speechRawFallbackNotifiedRef.current) {
+          speechRawFallbackNotifiedRef.current = true;
+          showToast('未配置 API Key，语音内容将直接写入', 'info');
+        }
+        if (output.trim()) {
+          editor.chain().focus().insertContent(output).run();
+        }
+      });
     };
     const scheduleInterimCommit = (raw: string) => {
       const text = String(raw || '').trim();
@@ -559,8 +577,9 @@ export const NoteEditor = forwardRef<NoteEditorHandle, NoteEditorProps>(function
     webSpeechRecognitionRef.current = recognition;
     webSpeechLastFinalRef.current = '';
     webSpeechPendingInterimRef.current = '';
+    speechRawFallbackNotifiedRef.current = false;
     setIsListening(true);
-  }, [editor, stopWebSpeech, webSpeechCtor]);
+  }, [aiConfig, editor, stopWebSpeech, webSpeechCtor]);
 
   const toggleSpeech = async () => {
     if (!speechSupported) { showToast('当前环境不支持语音输入', 'info'); return; }
@@ -753,7 +772,7 @@ export const NoteEditor = forwardRef<NoteEditorHandle, NoteEditorProps>(function
             )}
           </div>
           <div className="editor-side-actions">
-            {speechSupported && <button onClick={toggleSpeech} className={`editor-icon-btn editor-speech-btn ${isListening ? 'listening' : ''}`}><svg width="16" height="16" viewBox="0 0 24 24" fill="none"><rect x="9" y="2" width="6" height="12" rx="3" stroke="currentColor" strokeWidth="1.8"/><path d="M5 11C5 14.866 8.134 18 12 18V22" stroke="currentColor" strokeWidth="1.8" /></svg></button>}
+            {speechSupported && <button onClick={toggleSpeech} className={`editor-icon-btn editor-speech-btn speech-btn ${isListening ? 'listening' : 'idle'}`}><svg width="16" height="16" viewBox="0 0 24 24" fill="none"><rect x="9" y="2" width="6" height="12" rx="3" stroke="currentColor" strokeWidth="1.8"/><path d="M5 11C5 14.866 8.134 18 12 18V22" stroke="currentColor" strokeWidth="1.8" /></svg></button>}
             <div className="editor-side-bottom">
               <button
                 type="button"
