@@ -133,6 +133,140 @@ const webRequest = async <T>(path: string, init?: RequestInit): Promise<T> => {
   return response.json() as Promise<T>;
 };
 
+const WEB_LOCAL_AUTH_KEY = 'web_local_auth_v1';
+const WEB_LOCAL_DATA_PREFIX = 'web_local_data_v1';
+
+interface WebLocalAuthUser {
+  account: string;
+  password: string;
+}
+
+interface WebLocalAuthState {
+  users: WebLocalAuthUser[];
+}
+
+interface WebLocalDataState {
+  notes: Note[];
+  folders: Folder[];
+  tags: Tag[];
+  noteTags: Array<{ note_id: number; tag_id: number }>;
+  plans: Plan[];
+  planItems: PlanItem[];
+  meetingRooms: MeetingRoom[];
+  meetingParticipants: MeetingParticipant[];
+  counters: {
+    note: number;
+    folder: number;
+    tag: number;
+    plan: number;
+    planItem: number;
+    meetingRoom: number;
+    meetingParticipant: number;
+  };
+}
+
+const nowIso = () => new Date().toISOString();
+
+const safeParseJson = <T>(raw: string | null, fallback: T): T => {
+  if (!raw) return fallback;
+  try {
+    return JSON.parse(raw) as T;
+  } catch {
+    return fallback;
+  }
+};
+
+const loadWebLocalAuth = (): WebLocalAuthState => {
+  if (typeof window === 'undefined') return { users: [] };
+  return safeParseJson<WebLocalAuthState>(window.localStorage.getItem(WEB_LOCAL_AUTH_KEY), { users: [] });
+};
+
+const saveWebLocalAuth = (state: WebLocalAuthState) => {
+  if (typeof window === 'undefined') return;
+  window.localStorage.setItem(WEB_LOCAL_AUTH_KEY, JSON.stringify(state));
+};
+
+const makeLocalToken = (account: string): string => `local_${account}_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`;
+
+const localRegisterWithPassword = (account: string, password: string): { access_token: string; refresh_token?: string } => {
+  const normalizedAccount = account.trim();
+  const normalizedPassword = password.trim();
+  if (!normalizedAccount || !normalizedPassword) {
+    throw new Error('account and password are required');
+  }
+  const state = loadWebLocalAuth();
+  const existed = state.users.find((item) => item.account === normalizedAccount);
+  if (existed) {
+    throw new Error('account already exists');
+  }
+  state.users.push({ account: normalizedAccount, password: normalizedPassword });
+  saveWebLocalAuth(state);
+  return { access_token: makeLocalToken(normalizedAccount) };
+};
+
+const localLoginWithPassword = (account: string, password: string): { access_token: string; refresh_token?: string } => {
+  const normalizedAccount = account.trim();
+  const normalizedPassword = password.trim();
+  if (!normalizedAccount || !normalizedPassword) {
+    throw new Error('account and password are required');
+  }
+  const state = loadWebLocalAuth();
+  const matched = state.users.find((item) => item.account === normalizedAccount && item.password === normalizedPassword);
+  if (!matched) {
+    throw new Error('invalid account or password');
+  }
+  return { access_token: makeLocalToken(normalizedAccount) };
+};
+
+const getWebLocalDataKey = (): string => {
+  if (typeof window === 'undefined') return `${WEB_LOCAL_DATA_PREFIX}_default`;
+  const token = getWebAuthToken().trim() || 'anonymous';
+  const normalized = token.replace(/[^a-zA-Z0-9_-]/g, '_').slice(0, 64);
+  return `${WEB_LOCAL_DATA_PREFIX}_${normalized || 'anonymous'}`;
+};
+
+const emptyWebLocalData = (): WebLocalDataState => ({
+  notes: [],
+  folders: [],
+  tags: [],
+  noteTags: [],
+  plans: [],
+  planItems: [],
+  meetingRooms: [],
+  meetingParticipants: [],
+  counters: {
+    note: 0,
+    folder: 0,
+    tag: 0,
+    plan: 0,
+    planItem: 0,
+    meetingRoom: 0,
+    meetingParticipant: 0,
+  },
+});
+
+const loadWebLocalData = (): WebLocalDataState => {
+  if (typeof window === 'undefined') return emptyWebLocalData();
+  return safeParseJson<WebLocalDataState>(window.localStorage.getItem(getWebLocalDataKey()), emptyWebLocalData());
+};
+
+const saveWebLocalData = (data: WebLocalDataState) => {
+  if (typeof window === 'undefined') return;
+  window.localStorage.setItem(getWebLocalDataKey(), JSON.stringify(data));
+};
+
+const nextLocalId = (data: WebLocalDataState, key: keyof WebLocalDataState['counters']): number => {
+  data.counters[key] += 1;
+  return data.counters[key];
+};
+
+const statusRank = (status: string): number => {
+  if (status === 'todo') return 0;
+  if (status === 'in_progress') return 1;
+  if (status === 'done') return 2;
+  return 3;
+};
+
 const ensureLocalRoomId = (roomIdOrKey: number | string): number => {
   if (typeof roomIdOrKey === 'number') return roomIdOrKey;
   throw new Error('本地信令模式需要数字 roomId；远程模式请配置远程信令服务地址');

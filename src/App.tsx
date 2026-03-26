@@ -60,6 +60,10 @@ function WebPortalApp() {
   const [authAccount, setAuthAccount] = useState('');
   const [authPassword, setAuthPassword] = useState('');
   const [authToken, setAuthToken] = useState(() => api.getWebAuthToken());
+  const normalizeErrorMessage = (error: unknown) => {
+    if (error instanceof Error) return error.message;
+    return String(error || '请求失败');
+  };
 
   const navigate = (nextPath: string) => {
     if (window.location.pathname !== nextPath) {
@@ -144,7 +148,12 @@ function WebPortalApp() {
       navigate('/app');
     } catch (error) {
       console.error('Failed to register:', error);
-      showToast('注册失败，请稍后重试', 'error');
+      const message = normalizeErrorMessage(error);
+      if (message.includes('account already exists')) {
+        showToast('账号已存在，请直接登录', 'error');
+        return;
+      }
+      showToast(`注册失败：${message}`, 'error');
     }
   };
 
@@ -166,7 +175,12 @@ function WebPortalApp() {
       navigate('/app');
     } catch (error) {
       console.error('Failed to login:', error);
-      showToast('登录失败，请检查账号密码', 'error');
+      const message = normalizeErrorMessage(error);
+      if (message.includes('invalid account or password')) {
+        showToast('登录失败：账号或密码错误', 'error');
+        return;
+      }
+      showToast(`登录失败：${message}`, 'error');
     }
   };
 
