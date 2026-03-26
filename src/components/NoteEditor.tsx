@@ -164,6 +164,8 @@ export const NoteEditor = forwardRef<NoteEditorHandle, NoteEditorProps>(function
   const latestTranslationsRef = useRef<string>(note?.translations || '{}');
   const webSpeechRecognitionRef = useRef<InstanceType<WebSpeechRecognitionCtor> | null>(null);
   const webSpeechLastFinalRef = useRef('');
+  const webSpeechPendingInterimRef = useRef('');
+  const webSpeechInterimTimerRef = useRef<number | null>(null);
   const { aiConfig, setAIConfig, currentLanguage, setCurrentLanguage, setSelectedNote } = useStore();
   const tauriRuntime = api.isTauriRuntime();
   const webSpeechCtor = tauriRuntime ? null : getWebSpeechRecognitionCtor();
@@ -455,6 +457,10 @@ export const NoteEditor = forwardRef<NoteEditorHandle, NoteEditorProps>(function
   };
 
   const stopWebSpeech = useCallback(() => {
+    if (webSpeechInterimTimerRef.current) {
+      window.clearTimeout(webSpeechInterimTimerRef.current);
+      webSpeechInterimTimerRef.current = null;
+    }
     const current = webSpeechRecognitionRef.current;
     if (!current) return;
     current.onresult = null;
@@ -477,20 +483,57 @@ export const NoteEditor = forwardRef<NoteEditorHandle, NoteEditorProps>(function
     recognition.continuous = true;
     recognition.interimResults = true;
     recognition.maxAlternatives = 1;
+    const commitText = (raw: string) => {
+      const text = String(raw || '').trim();
+      if (!text) return;
+      if (text === webSpeechLastFinalRef.current) return;
+      webSpeechLastFinalRef.current = text;
+      editor.chain().focus().insertContent(text).run();
+    };
+    const scheduleInterimCommit = (raw: string) => {
+      const text = String(raw || '').trim();
+      if (!text) return;
+      webSpeechPendingInterimRef.current = text;
+      if (webSpeechInterimTimerRef.current) {
+        window.clearTimeout(webSpeechInterimTimerRef.current);
+      }
+      webSpeechInterimTimerRef.current = window.setTimeout(() => {
+        if (webSpeechPendingInterimRef.current) {
+          commitText(webSpeechPendingInterimRef.current);
+          webSpeechPendingInterimRef.current = '';
+        }
+        webSpeechInterimTimerRef.current = null;
+      }, 1200);
+    };
     recognition.onresult = (event: any) => {
       let finalText = '';
+      let interimText = '';
       for (let i = event.resultIndex; i < event.results.length; i += 1) {
         const result = event.results[i];
         const text = String(result?.[0]?.transcript || '').trim();
         if (!text) continue;
         if (result.isFinal) finalText += text;
+        else interimText += text;
       }
       const normalized = finalText.trim();
-      if (!normalized || normalized === webSpeechLastFinalRef.current) return;
-      webSpeechLastFinalRef.current = normalized;
-      editor.chain().focus().insertContent(normalized).run();
+      if (normalized) {
+        if (webSpeechInterimTimerRef.current) {
+          window.clearTimeout(webSpeechInterimTimerRef.current);
+          webSpeechInterimTimerRef.current = null;
+        }
+        webSpeechPendingInterimRef.current = '';
+        commitText(normalized);
+        return;
+      }
+      if (interimText.trim()) {
+        scheduleInterimCommit(interimText);
+      }
     };
     recognition.onerror = (event: any) => {
+      if (webSpeechPendingInterimRef.current) {
+        commitText(webSpeechPendingInterimRef.current);
+        webSpeechPendingInterimRef.current = '';
+      }
       const code = String(event?.error || '');
       if (code === 'not-allowed' || code === 'service-not-allowed') {
         showToast('麦克风权限被拒绝', 'error');
@@ -505,12 +548,17 @@ export const NoteEditor = forwardRef<NoteEditorHandle, NoteEditorProps>(function
       setIsListening(false);
     };
     recognition.onend = () => {
+      if (webSpeechPendingInterimRef.current) {
+        commitText(webSpeechPendingInterimRef.current);
+        webSpeechPendingInterimRef.current = '';
+      }
       webSpeechRecognitionRef.current = null;
       setIsListening(false);
     };
     recognition.start();
     webSpeechRecognitionRef.current = recognition;
     webSpeechLastFinalRef.current = '';
+    webSpeechPendingInterimRef.current = '';
     setIsListening(true);
   }, [editor, stopWebSpeech, webSpeechCtor]);
 
