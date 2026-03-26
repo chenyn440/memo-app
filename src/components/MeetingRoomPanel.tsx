@@ -47,6 +47,12 @@ interface MeetingChatMessage {
   isSelf: boolean;
 }
 
+interface ParticipantListItem {
+  id: string;
+  name: string;
+  status: 'online' | 'offline';
+}
+
 const BEAUTY_STORAGE_KEY = 'meeting_beauty_v1';
 const SIGNAL_ROOM_KEY_STORAGE_KEY = 'meeting_signal_room_key';
 const FIXED_REMOTE_SIGNAL_SERVER_URL = 'https://aiyn.cloud:8081';
@@ -149,6 +155,7 @@ export function MeetingRoomPanel({
   const [refreshing, setRefreshing] = useState(false);
   const [audioUnlockNeeded, setAudioUnlockNeeded] = useState(false);
   const [cameraSwitching, setCameraSwitching] = useState(false);
+  const [participantDrawerOpen, setParticipantDrawerOpen] = useState(false);
   const [signalRoomKey, setSignalRoomKey] = useState(
     webSession?.roomKey || room?.room_code || String(room?.id ?? 'web-room')
   );
@@ -927,11 +934,44 @@ export function MeetingRoomPanel({
     ? `${lastChatMessage.senderName}：${lastChatMessage.text}`
     : '暂无聊天内容，开始讨论后这里会展示最近消息。';
   const stageStatusLine = `在线 ${onlineCount} 人 · 信令${rtcSyncState === 'ok' ? '正常' : rtcSyncState === 'syncing' ? '同步中' : '重试中'} · 时长 ${elapsedLabel}`;
+  const participantItems = useMemo<ParticipantListItem[]>(() => {
+    const map = new Map<string, ParticipantListItem>();
+    meetingPeers.forEach((peer) => {
+      const name = peer.user_name?.trim() || '未命名用户';
+      map.set(peer.peer_id, {
+        id: peer.peer_id,
+        name: peer.peer_id === localPeerIdRef.current ? `我（${name}）` : name,
+        status: 'online',
+      });
+    });
+    if (!map.has(localPeerIdRef.current)) {
+      const localName = userName.trim() || '本地用户';
+      map.set(localPeerIdRef.current, {
+        id: localPeerIdRef.current,
+        name: `我（${localName}）`,
+        status: 'online',
+      });
+    }
+    return Array.from(map.values());
+  }, [meetingPeers, userName]);
 
   useEffect(() => {
     if (!chatListRef.current) return;
     chatListRef.current.scrollTop = chatListRef.current.scrollHeight;
   }, [chatMessages]);
+
+  useEffect(() => {
+    const media = window.matchMedia('(min-width: 1201px)');
+    const onChange = (event: MediaQueryListEvent) => {
+      if (event.matches) {
+        setParticipantDrawerOpen(false);
+      }
+    };
+    media.addEventListener('change', onChange);
+    return () => {
+      media.removeEventListener('change', onChange);
+    };
+  }, []);
 
   useEffect(() => {
     if (isTwoPersonLayout && focusedTileId) {
@@ -1714,6 +1754,12 @@ export function MeetingRoomPanel({
           <span className="meeting-room-code-inline">房间号 {currentRoom.room_code}</span>
         </div>
         <div className="meeting-room-header-tools">
+          <button
+            className="meeting-room-info-toggle meeting-participants-toggle"
+            onClick={() => setParticipantDrawerOpen(true)}
+          >
+            参会人({participantItems.length})
+          </button>
           <button className="meeting-room-info-toggle" onClick={() => void copyInviteInfo()}>
             复制会议链接
           </button>
@@ -1904,143 +1950,188 @@ export function MeetingRoomPanel({
       </div>
 
       <div className="meeting-room-body">
-        <div className={`meeting-room-video-grid ${isTwoPersonLayout ? 'two-person-layout' : ''} ${remotePeerTiles.length === 0 ? 'single-tile' : ''}`}>
-          {isTwoPersonLayout && (
-            <div className="meeting-stage-panel">
-              <div className="meeting-stage-skeleton">
-                <i />
-                <i />
-                <i />
-              </div>
-              <div className="meeting-stage-card">
-                <strong>{stageHeadline}</strong>
-                <p className="meeting-stage-summary">{stageSummary}</p>
-                <p className="meeting-stage-status">{stageStatusLine}</p>
-              </div>
-              <div className="meeting-stage-tags">
-                <span className="meeting-stage-tag">房间 {currentRoom.room_code}</span>
-                <span className="meeting-stage-tag">{screenSharing ? '共享屏幕中' : '摄像头会议'}</span>
-              </div>
-            </div>
-          )}
-          <div
-            className={`meeting-video-tile meeting-video-tile-local ${enableTileFocus ? 'meeting-video-tile-interactive' : ''} ${focusedTileId === 'local' ? 'focused' : ''} ${hasFocusedTile && focusedTileId !== 'local' ? 'dimmed' : ''}`}
-            data-audio-level={Math.round(localAudioLevel * 100)}
-            onClick={enableTileFocus ? (() => setFocusedTileId((prev) => (prev === 'local' ? null : 'local'))) : undefined}
-            onDoubleClick={enableTileFocus ? ((e) => requestTileFullscreen(e.target)) : undefined}
-            title={enableTileFocus ? '点击聚焦，双击全屏' : '双人会议布局'}
-          >
-            <video ref={localVideoRef} autoPlay playsInline muted className="meeting-local-video-source" />
-            <canvas
-              ref={localCanvasRef}
-              className="meeting-local-canvas"
-              style={{ transform: screenSharing ? 'none' : 'scaleX(-1)' }}
-            />
-            {!cameraEnabled && !screenSharing && (
-              <div className="meeting-local-placeholder">
-                <div className="meeting-local-avatar">{localDisplayName}</div>
-                <div className="meeting-local-placeholder-text">摄像头已关闭</div>
-              </div>
-            )}
-          </div>
-          {remotePeerTiles.map((peer) => {
-            const stream = remoteStreams[peer.peer_id];
-            const connState = peerConnStates[peer.peer_id] ?? 'new';
-            const hasVideo = Boolean(stream?.getVideoTracks().some((track) => track.readyState === 'live' && track.enabled));
-            const hasAudio = Boolean(stream?.getAudioTracks().some((track) => track.readyState === 'live' && track.enabled));
-            const level = remoteAudioLevels[peer.peer_id] ?? 0;
-            const isSpeaking = activeSpeakerPeerId === peer.peer_id;
-            const tileId = `peer:${peer.peer_id}`;
-            const connLabel = connState === 'connected'
-              ? '已连接'
-              : connState === 'connecting'
-                ? '连接中'
-                : connState === 'disconnected'
-                  ? '已断开'
-                  : connState === 'failed'
-                    ? '连接失败'
-                    : '准备中';
-            return (
+        <div className="meeting-room-content">
+          <div className="meeting-room-main">
+            <div className={`meeting-room-video-grid ${isTwoPersonLayout ? 'two-person-layout' : ''} ${remotePeerTiles.length === 0 ? 'single-tile' : ''}`}>
+              {isTwoPersonLayout && (
+                <div className="meeting-stage-panel">
+                  <div className="meeting-stage-skeleton">
+                    <i />
+                    <i />
+                    <i />
+                  </div>
+                  <div className="meeting-stage-card">
+                    <strong>{stageHeadline}</strong>
+                    <p className="meeting-stage-summary">{stageSummary}</p>
+                    <p className="meeting-stage-status">{stageStatusLine}</p>
+                  </div>
+                  <div className="meeting-stage-tags">
+                    <span className="meeting-stage-tag">房间 {currentRoom.room_code}</span>
+                    <span className="meeting-stage-tag">{screenSharing ? '共享屏幕中' : '摄像头会议'}</span>
+                  </div>
+                </div>
+              )}
               <div
-                key={peer.peer_id}
-                className={`meeting-video-tile meeting-video-tile-remote ${enableTileFocus ? 'meeting-video-tile-interactive' : ''} ${focusedTileId === tileId ? 'focused' : ''} ${hasFocusedTile && focusedTileId !== tileId ? 'dimmed' : ''} ${isSpeaking ? 'speaking' : ''}`}
-                onClick={enableTileFocus ? (() => setFocusedTileId((prev) => (prev === tileId ? null : tileId))) : undefined}
+                className={`meeting-video-tile meeting-video-tile-local ${enableTileFocus ? 'meeting-video-tile-interactive' : ''} ${focusedTileId === 'local' ? 'focused' : ''} ${hasFocusedTile && focusedTileId !== 'local' ? 'dimmed' : ''}`}
+                data-audio-level={Math.round(localAudioLevel * 100)}
+                onClick={enableTileFocus ? (() => setFocusedTileId((prev) => (prev === 'local' ? null : 'local'))) : undefined}
                 onDoubleClick={enableTileFocus ? ((e) => requestTileFullscreen(e.target)) : undefined}
                 title={enableTileFocus ? '点击聚焦，双击全屏' : '双人会议布局'}
               >
-                {stream ? (
-                  <video
-                    className="meeting-remote-video"
-                    autoPlay
-                    playsInline
-                    ref={(el) => {
-                      if (!el) return;
-                      el.muted = false;
-                      el.volume = 1;
-                      if (el.srcObject !== stream) {
-                        el.srcObject = stream;
-                      }
-                      void el.play().catch((error) => {
-                        console.warn('Remote video autoplay blocked:', error);
-                        setAudioUnlockNeeded(true);
-                      });
-                    }}
-                    style={{ width: '100%', height: '100%', objectFit: 'cover' }}
-                  />
-                ) : (
-                  <span>{peer.user_name}</span>
-                )}
-                <div className="meeting-remote-tile-label">
-                  <span>{peer.user_name}</span>
-                  <span>{connLabel}</span>
-                  <span>对方 {peer.camera_on ? '开视频' : '关视频'} / {peer.mic_on ? '开麦' : '关麦'}</span>
-                  {stream && <span>流 {hasVideo ? '视频有' : '视频无'} / {hasAudio ? '音频有' : '音频无'}</span>}
-                  <span className="meeting-remote-audio-meter">
-                    <i style={{ width: `${Math.round(level * 100)}%` }} />
-                  </span>
-                  {isSpeaking && <span className="meeting-remote-speaking-badge">发言中</span>}
-                </div>
-              </div>
-            );
-          })}
-          {isTwoPersonLayout && (
-            <div className="meeting-chat-panel">
-              <div className="meeting-chat-header">聊天</div>
-              <div ref={chatListRef} className="meeting-chat-list">
-                {chatMessages.length === 0 ? (
-                  <span className="meeting-chat-empty">暂无消息</span>
-                ) : (
-                  chatMessages.map((message) => (
-                    <div
-                      key={message.id}
-                      className={`meeting-chat-item ${message.isSelf ? 'self' : ''}`}
-                    >
-                      <div className="meeting-chat-meta">
-                        <span>{message.senderName}</span>
-                      </div>
-                      <div className="meeting-chat-bubble">{message.text}</div>
-                    </div>
-                  ))
-                )}
-              </div>
-              <div className="meeting-chat-input-row">
-                <input
-                  value={chatInput}
-                  onChange={(e) => setChatInput(e.target.value)}
-                  placeholder="输入消息..."
-                  onKeyDown={(e) => {
-                    if (e.key === 'Enter' && !e.shiftKey) {
-                      e.preventDefault();
-                      void sendChatMessage();
-                    }
-                  }}
+                <video ref={localVideoRef} autoPlay playsInline muted className="meeting-local-video-source" />
+                <canvas
+                  ref={localCanvasRef}
+                  className="meeting-local-canvas"
+                  style={{ transform: screenSharing ? 'none' : 'scaleX(-1)' }}
                 />
-                <button type="button" onClick={() => void sendChatMessage()}>发送</button>
+                {!cameraEnabled && !screenSharing && (
+                  <div className="meeting-local-placeholder">
+                    <div className="meeting-local-avatar">{localDisplayName}</div>
+                    <div className="meeting-local-placeholder-text">摄像头已关闭</div>
+                  </div>
+                )}
+              </div>
+              {remotePeerTiles.map((peer) => {
+                const stream = remoteStreams[peer.peer_id];
+                const connState = peerConnStates[peer.peer_id] ?? 'new';
+                const hasVideo = Boolean(stream?.getVideoTracks().some((track) => track.readyState === 'live' && track.enabled));
+                const hasAudio = Boolean(stream?.getAudioTracks().some((track) => track.readyState === 'live' && track.enabled));
+                const level = remoteAudioLevels[peer.peer_id] ?? 0;
+                const isSpeaking = activeSpeakerPeerId === peer.peer_id;
+                const tileId = `peer:${peer.peer_id}`;
+                const connLabel = connState === 'connected'
+                  ? '已连接'
+                  : connState === 'connecting'
+                    ? '连接中'
+                    : connState === 'disconnected'
+                      ? '已断开'
+                      : connState === 'failed'
+                        ? '连接失败'
+                        : '准备中';
+                return (
+                  <div
+                    key={peer.peer_id}
+                    className={`meeting-video-tile meeting-video-tile-remote ${enableTileFocus ? 'meeting-video-tile-interactive' : ''} ${focusedTileId === tileId ? 'focused' : ''} ${hasFocusedTile && focusedTileId !== tileId ? 'dimmed' : ''} ${isSpeaking ? 'speaking' : ''}`}
+                    onClick={enableTileFocus ? (() => setFocusedTileId((prev) => (prev === tileId ? null : tileId))) : undefined}
+                    onDoubleClick={enableTileFocus ? ((e) => requestTileFullscreen(e.target)) : undefined}
+                    title={enableTileFocus ? '点击聚焦，双击全屏' : '双人会议布局'}
+                  >
+                    {stream ? (
+                      <video
+                        className="meeting-remote-video"
+                        autoPlay
+                        playsInline
+                        ref={(el) => {
+                          if (!el) return;
+                          el.muted = false;
+                          el.volume = 1;
+                          if (el.srcObject !== stream) {
+                            el.srcObject = stream;
+                          }
+                          void el.play().catch((error) => {
+                            console.warn('Remote video autoplay blocked:', error);
+                            setAudioUnlockNeeded(true);
+                          });
+                        }}
+                        style={{ width: '100%', height: '100%', objectFit: 'cover' }}
+                      />
+                    ) : (
+                      <span>{peer.user_name}</span>
+                    )}
+                    <div className="meeting-remote-tile-label">
+                      <span>{peer.user_name}</span>
+                      <span>{connLabel}</span>
+                      <span>对方 {peer.camera_on ? '开视频' : '关视频'} / {peer.mic_on ? '开麦' : '关麦'}</span>
+                      {stream && <span>流 {hasVideo ? '视频有' : '视频无'} / {hasAudio ? '音频有' : '音频无'}</span>}
+                      <span className="meeting-remote-audio-meter">
+                        <i style={{ width: `${Math.round(level * 100)}%` }} />
+                      </span>
+                      {isSpeaking && <span className="meeting-remote-speaking-badge">发言中</span>}
+                    </div>
+                  </div>
+                );
+              })}
+              {isTwoPersonLayout && (
+                <div className="meeting-chat-panel">
+                  <div className="meeting-chat-header">聊天</div>
+                  <div ref={chatListRef} className="meeting-chat-list">
+                    {chatMessages.length === 0 ? (
+                      <span className="meeting-chat-empty">暂无消息</span>
+                    ) : (
+                      chatMessages.map((message) => (
+                        <div
+                          key={message.id}
+                          className={`meeting-chat-item ${message.isSelf ? 'self' : ''}`}
+                        >
+                          <div className="meeting-chat-meta">
+                            <span>{message.senderName}</span>
+                          </div>
+                          <div className="meeting-chat-bubble">{message.text}</div>
+                        </div>
+                      ))
+                    )}
+                  </div>
+                  <div className="meeting-chat-input-row">
+                    <input
+                      value={chatInput}
+                      onChange={(e) => setChatInput(e.target.value)}
+                      placeholder="输入消息..."
+                      onKeyDown={(e) => {
+                        if (e.key === 'Enter' && !e.shiftKey) {
+                          e.preventDefault();
+                          void sendChatMessage();
+                        }
+                      }}
+                    />
+                    <button type="button" onClick={() => void sendChatMessage()}>发送</button>
+                  </div>
+                </div>
+              )}
+            </div>
+            {mediaError && <p className="meeting-room-media-error">{mediaError}</p>}
+          </div>
+          <aside className="meeting-participants-sidebar">
+            <div className="meeting-participants-title">参会人员（{participantItems.length}）</div>
+            <div className="meeting-participants-list">
+              {participantItems.map((item) => (
+                <div key={item.id} className="meeting-participant-row">
+                  <span className="meeting-participant-name">{item.name}</span>
+                  <span className={`meeting-participant-status ${item.status}`}>
+                    <i />
+                    在线
+                  </span>
+                </div>
+              ))}
+            </div>
+          </aside>
+        </div>
+        {participantDrawerOpen && (
+          <div className="meeting-participants-drawer-wrap" onClick={() => setParticipantDrawerOpen(false)}>
+            <div className="meeting-participants-drawer" onClick={(e) => e.stopPropagation()}>
+              <div className="meeting-participants-drawer-head">
+                <span>参会人员（{participantItems.length}）</span>
+                <button
+                  type="button"
+                  className="meeting-room-info-toggle"
+                  onClick={() => setParticipantDrawerOpen(false)}
+                >
+                  关闭
+                </button>
+              </div>
+              <div className="meeting-participants-list">
+                {participantItems.map((item) => (
+                  <div key={item.id} className="meeting-participant-row">
+                    <span className="meeting-participant-name">{item.name}</span>
+                    <span className={`meeting-participant-status ${item.status}`}>
+                      <i />
+                      在线
+                    </span>
+                  </div>
+                ))}
               </div>
             </div>
-          )}
-        </div>
-        {mediaError && <p className="meeting-room-media-error">{mediaError}</p>}
+          </div>
+        )}
       </div>
     </div>
   );
