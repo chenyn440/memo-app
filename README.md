@@ -221,6 +221,26 @@ MEETING_SIGNAL_PORT=8787
 
 点击“保存配置”后即切到远程模式。两端填写同一服务地址 + 同一房间标识即可互通。
 
+## 网页版入会与下载页
+
+当前 Web 端已支持公开页面入会（无需安装桌面端）：
+
+- `/`：落地页（网页版入会 + 下载 App）
+- `/join`：网页版入会页（昵称 + 房间标识）
+- `/meeting`：网页版会议页
+
+下载按钮地址可通过环境变量覆盖：
+
+```bash
+VITE_APP_DOWNLOAD_URL=https://your-download-page
+```
+
+未设置时默认跳转：
+
+```text
+https://github.com/chenyongnuan/memo-app/releases
+```
+
 ## 腾讯云 Nginx 部署脚本
 
 已提供一键脚本（适用于 Ubuntu/CentOS 常见环境）：

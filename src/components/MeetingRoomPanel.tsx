@@ -10,10 +10,16 @@ declare global {
 }
 
 interface MeetingRoomPanelProps {
-  room: MeetingRoom;
-  token: string;
-  onBack: () => void;
-  onEnd: () => void;
+  mode?: 'desktop' | 'web';
+  room?: MeetingRoom;
+  token?: string;
+  onBack?: () => void;
+  onEnd?: () => void;
+  onLeave?: () => void;
+  webSession?: {
+    roomKey: string;
+    displayName: string;
+  };
 }
 
 type BeautyPreset = 'natural' | 'standard' | 'pro';
@@ -35,6 +41,7 @@ interface FaceAnchor {
 
 const BEAUTY_STORAGE_KEY = 'meeting_beauty_v1';
 const SIGNAL_ROOM_KEY_STORAGE_KEY = 'meeting_signal_room_key';
+const FIXED_REMOTE_SIGNAL_SERVER_URL = 'https://aiyn.cloud:8081';
 
 const BEAUTY_PRESET_TUNING: Record<BeautyPreset, BeautyTuning> = {
   natural: { faceSlim: 22, eyeEnlarge: 18, skinSmooth: 28 },
@@ -94,8 +101,28 @@ const BEAUTY_PRESET_LABEL: Record<BeautyPreset, string> = {
   pro: '精致',
 };
 
-export function MeetingRoomPanel({ room, token, onBack, onEnd }: MeetingRoomPanelProps) {
-  const [currentRoom, setCurrentRoom] = useState<MeetingRoom>(room);
+export function MeetingRoomPanel({
+  mode = 'desktop',
+  room,
+  token,
+  onBack,
+  onEnd,
+  onLeave,
+  webSession,
+}: MeetingRoomPanelProps) {
+  const isWebMode = mode === 'web';
+  const defaultRoom = room ?? {
+    id: 0,
+    plan_item_id: 0,
+    room_code: webSession?.roomKey || 'web-room',
+    room_name: '网页会议',
+    state: 'in_progress',
+    started_at: new Date().toISOString(),
+    ended_at: null,
+    created_at: new Date().toISOString(),
+    updated_at: new Date().toISOString(),
+  };
+  const [currentRoom, setCurrentRoom] = useState<MeetingRoom>(defaultRoom);
   const [participants, setParticipants] = useState<MeetingParticipant[]>([]);
   const [meetingPeers, setMeetingPeers] = useState<MeetingPeer[]>([]);
   const [remoteStreams, setRemoteStreams] = useState<Record<string, MediaStream>>({});
@@ -106,7 +133,7 @@ export function MeetingRoomPanel({ room, token, onBack, onEnd }: MeetingRoomPane
   const [activeSpeakerPeerId, setActiveSpeakerPeerId] = useState<string | null>(null);
   const [localAudioLevel, setLocalAudioLevel] = useState(0);
   const [localSpeaking, setLocalSpeaking] = useState(false);
-  const [userName, setUserName] = useState('本地用户');
+  const [userName, setUserName] = useState(webSession?.displayName?.trim() || '本地用户');
   const [clockTick, setClockTick] = useState(0);
   const [micEnabled, setMicEnabled] = useState(true);
   const [cameraEnabled, setCameraEnabled] = useState(true);
@@ -114,8 +141,10 @@ export function MeetingRoomPanel({ room, token, onBack, onEnd }: MeetingRoomPane
   const [refreshing, setRefreshing] = useState(false);
   const [cameraSwitching, setCameraSwitching] = useState(false);
   const [infoCollapsed, setInfoCollapsed] = useState(false);
-  const [signalServerUrl, setSignalServerUrl] = useState('');
-  const [signalRoomKey, setSignalRoomKey] = useState(room.room_code || String(room.id));
+  const [signalRoomKey, setSignalRoomKey] = useState(
+    webSession?.roomKey || room?.room_code || String(room?.id ?? 'web-room')
+  );
+  const [inviteRawText, setInviteRawText] = useState('');
   const [beautyTabOpen, setBeautyTabOpen] = useState(false);
   const [beautyPreset, setBeautyPreset] = useState<BeautyPreset | null>('standard');
   const [beautyTuning, setBeautyTuning] = useState<BeautyTuning>(BEAUTY_PRESET_TUNING.standard);
@@ -316,42 +345,24 @@ export function MeetingRoomPanel({ room, token, onBack, onEnd }: MeetingRoomPane
     audioCtxRef.current = new Ctor();
     return audioCtxRef.current;
   };
-  const signalingRemoteEnabled = Boolean(signalServerUrl.trim());
-  const signalingRoomIdOrKey: number | string = signalingRemoteEnabled
-    ? (signalRoomKey.trim() || currentRoom.room_code || String(currentRoom.id))
-    : currentRoom.id;
+  const signalServerUrl = FIXED_REMOTE_SIGNAL_SERVER_URL;
+  const signalingRoomIdOrKey: string = signalRoomKey.trim() || currentRoom.room_code || String(currentRoom.id);
 
-  const saveSignalConfig = () => {
-    const normalized = api.setMeetingSignalServerUrl(signalServerUrl);
-    setSignalServerUrl(normalized);
+  const saveSignalRoomConfig = () => {
     const normalizedRoomKey = signalRoomKey.trim() || currentRoom.room_code || String(currentRoom.id);
     setSignalRoomKey(normalizedRoomKey);
     localStorage.setItem(SIGNAL_ROOM_KEY_STORAGE_KEY, normalizedRoomKey);
-    showToast(normalized ? '已切换到远程信令模式' : '已切换到本地信令模式', 'success');
-  };
-
-  const clearSignalConfig = () => {
-    api.setMeetingSignalServerUrl('');
-    setSignalServerUrl('');
-    const fallback = currentRoom.room_code || String(currentRoom.id);
-    setSignalRoomKey(fallback);
-    localStorage.setItem(SIGNAL_ROOM_KEY_STORAGE_KEY, fallback);
-    showToast('已恢复本地信令模式', 'info');
+    showToast('房间标识已保存', 'success');
   };
 
   const copyInviteInfo = async () => {
     const roomKey = signalRoomKey.trim() || currentRoom.room_code || String(currentRoom.id);
-    const signalUrl = signalServerUrl.trim();
-    if (!signalUrl) {
-      showToast('请先填写并保存远程信令服务地址', 'error');
-      return;
-    }
     const inviteText = [
       `会议名称：${currentRoom.room_name}`,
       `会议房间码：${currentRoom.room_code}`,
-      `信令服务：${signalUrl}`,
+      `信令服务：${signalServerUrl}`,
       `房间标识：${roomKey}`,
-      '使用方式：在会议页右侧“远程信令”填写以上服务地址和房间标识后保存。',
+      '使用方式：在会议页右侧填写房间标识后保存。',
     ].join('\n');
     try {
       if (navigator.clipboard?.writeText) {
@@ -371,6 +382,24 @@ export function MeetingRoomPanel({ room, token, onBack, onEnd }: MeetingRoomPane
       console.error('Failed to copy invite info:', error);
       showToast('复制失败，请手动复制', 'error');
     }
+  };
+
+  const importInviteInfo = () => {
+    const raw = inviteRawText.trim();
+    if (!raw) {
+      showToast('请先粘贴邀请内容', 'error');
+      return;
+    }
+    const roomKeyMatch = raw.match(/房间标识[：:]\s*([^\n\r]+)/);
+    const roomKey = roomKeyMatch?.[1]?.trim();
+    if (!roomKey) {
+      showToast('未识别到房间标识，请检查邀请内容', 'error');
+      return;
+    }
+    setSignalRoomKey(roomKey);
+    localStorage.setItem(SIGNAL_ROOM_KEY_STORAGE_KEY, roomKey);
+    setInviteRawText('');
+    showToast('邀请导入成功，已填入房间标识', 'success');
   };
 
   const publishSignal = async (
@@ -554,11 +583,15 @@ export function MeetingRoomPanel({ room, token, onBack, onEnd }: MeetingRoomPane
   };
 
   useEffect(() => {
+    if (webSession?.displayName?.trim()) {
+      setUserName(webSession.displayName.trim());
+      return;
+    }
     const saved = localStorage.getItem('meeting_user_name');
     if (saved?.trim()) {
       setUserName(saved.trim());
     }
-  }, []);
+  }, [webSession?.displayName]);
 
   useEffect(() => {
     if (!userName.trim()) return;
@@ -566,17 +599,14 @@ export function MeetingRoomPanel({ room, token, onBack, onEnd }: MeetingRoomPane
   }, [userName]);
 
   useEffect(() => {
-    const savedSignalServer = api.getMeetingSignalServerUrl();
-    if (savedSignalServer) {
-      setSignalServerUrl(savedSignalServer);
-    }
+    api.setMeetingSignalServerUrl(FIXED_REMOTE_SIGNAL_SERVER_URL);
     const savedRoomKey = localStorage.getItem(SIGNAL_ROOM_KEY_STORAGE_KEY)?.trim();
     if (savedRoomKey) {
       setSignalRoomKey(savedRoomKey);
     } else {
-      setSignalRoomKey(room.room_code || String(room.id));
+      setSignalRoomKey(webSession?.roomKey || room?.room_code || String(room?.id ?? 'web-room'));
     }
-  }, [room.room_code, room.id]);
+  }, [webSession?.roomKey, room?.room_code, room?.id]);
 
   useEffect(() => {
     try {
@@ -624,6 +654,7 @@ export function MeetingRoomPanel({ room, token, onBack, onEnd }: MeetingRoomPane
   }, []);
 
   useEffect(() => {
+    if (isWebMode) return;
     if (!currentRoom.id || !userName.trim()) return;
 
     let disposed = false;
@@ -668,10 +699,11 @@ export function MeetingRoomPanel({ room, token, onBack, onEnd }: MeetingRoomPane
         console.error('Failed to leave meeting room:', error);
       });
     };
-  }, [currentRoom.id, userName]);
+  }, [currentRoom.id, userName, isWebMode]);
 
   useEffect(() => {
-    if (!currentRoom.id || !userName.trim()) return;
+    if (!userName.trim()) return;
+    if (!isWebMode && !currentRoom.id) return;
     let disposed = false;
     const scheduleNext = (delayMs: number) => {
       if (disposed) return;
@@ -810,7 +842,7 @@ export function MeetingRoomPanel({ room, token, onBack, onEnd }: MeetingRoomPane
       lastSignalIdRef.current = 0;
       rtcErrorStreakRef.current = 0;
     };
-  }, [currentRoom.id, userName, signalingRoomIdOrKey]);
+  }, [currentRoom.id, userName, signalingRoomIdOrKey, isWebMode]);
 
   useEffect(() => {
     const timer = window.setInterval(() => {
@@ -833,6 +865,7 @@ export function MeetingRoomPanel({ room, token, onBack, onEnd }: MeetingRoomPane
     () => meetingPeers.filter((peer) => peer.peer_id !== localPeerIdRef.current),
     [meetingPeers]
   );
+  const onlineCount = isWebMode ? (remotePeerTiles.length + 1) : participants.length;
   const localDisplayName = (userName.trim() || '我').slice(0, 1).toUpperCase();
   const hasFocusedTile = Boolean(focusedTileId);
 
@@ -1025,6 +1058,7 @@ export function MeetingRoomPanel({ room, token, onBack, onEnd }: MeetingRoomPane
   };
 
   const refreshMeetingState = async () => {
+    if (isWebMode) return;
     setRefreshing(true);
     try {
       const [nextRoom, online] = await Promise.all([
@@ -1560,31 +1594,45 @@ export function MeetingRoomPanel({ room, token, onBack, onEnd }: MeetingRoomPane
           <div className="meeting-room-meta">
             <span>房间号 {currentRoom.room_code}</span>
             <span>状态 {currentRoom.state === 'in_progress' ? '进行中' : currentRoom.state === 'ended' ? '已结束' : '待开始'}</span>
-            <span>在线 {participants.length} 人</span>
+            <span>在线 {onlineCount} 人</span>
             <span>时长 {elapsedLabel}</span>
             <span>同步 {rtcSyncState === 'ok' ? '正常' : rtcSyncState === 'syncing' ? '同步中' : '重试中'}</span>
-            <span>信令 {signalingRemoteEnabled ? '远程' : '本地'}</span>
+            <span>信令 远程</span>
           </div>
         </div>
         <div className="meeting-room-actions">
-          <button
-            className="meeting-btn-secondary"
-            onClick={() => {
-              releaseAllMediaNow();
-              onBack();
-            }}
-          >
-            返回计划
-          </button>
-          <button
-            className="meeting-btn-primary"
-            onClick={() => {
-              releaseAllMediaNow();
-              onEnd();
-            }}
-          >
-            结束会议
-          </button>
+          {isWebMode ? (
+            <button
+              className="meeting-btn-secondary"
+              onClick={() => {
+                releaseAllMediaNow();
+                onLeave?.();
+              }}
+            >
+              离开会议
+            </button>
+          ) : (
+            <>
+              <button
+                className="meeting-btn-secondary"
+                onClick={() => {
+                  releaseAllMediaNow();
+                  onBack?.();
+                }}
+              >
+                返回计划
+              </button>
+              <button
+                className="meeting-btn-primary"
+                onClick={() => {
+                  releaseAllMediaNow();
+                  onEnd?.();
+                }}
+              >
+                结束会议
+              </button>
+            </>
+          )}
         </div>
       </div>
 
@@ -1670,9 +1718,11 @@ export function MeetingRoomPanel({ room, token, onBack, onEnd }: MeetingRoomPane
         >
           {screenSharing ? '停止共享' : '共享屏幕'}
         </button>
-        <button className="meeting-control-btn" onClick={() => void refreshMeetingState()} disabled={refreshing}>
-          {refreshing ? '刷新中...' : '刷新状态'}
-        </button>
+        {!isWebMode && (
+          <button className="meeting-control-btn" onClick={() => void refreshMeetingState()} disabled={refreshing}>
+            {refreshing ? '刷新中...' : '刷新状态'}
+          </button>
+        )}
         <div ref={beautyTabRef} className={`meeting-beauty-tab ${beautyTabOpen ? 'open' : ''}`}>
           <button
             type="button"
@@ -1860,20 +1910,16 @@ export function MeetingRoomPanel({ room, token, onBack, onEnd }: MeetingRoomPane
               </label>
               {mediaError && <p className="meeting-room-media-error">{mediaError}</p>}
               <h3>会议连接信息</h3>
-              <p className="meeting-room-token-label">Token（开发态）</p>
-              <code className="meeting-room-token">{token}</code>
-              <p className="meeting-room-token-label" style={{ marginTop: 8 }}>共享房间码</p>
+              {!isWebMode && (
+                <>
+                  <p className="meeting-room-token-label">Token（开发态）</p>
+                  <code className="meeting-room-token">{token || '-'}</code>
+                </>
+              )}
+              <p className="meeting-room-token-label meeting-room-token-label-tight">共享房间码</p>
               <code className="meeting-room-token">{currentRoom.room_code}</code>
-              <h3 style={{ marginTop: 12 }}>远程信令</h3>
-              <label className="meeting-room-name-input" style={{ gridTemplateColumns: '68px 1fr' }}>
-                服务地址
-                <input
-                  value={signalServerUrl}
-                  onChange={(e) => setSignalServerUrl(e.target.value)}
-                  placeholder="例如 http://192.168.1.10:8787"
-                />
-              </label>
-              <label className="meeting-room-name-input" style={{ gridTemplateColumns: '68px 1fr' }}>
+              <h3 className="meeting-room-subtitle">参会配置</h3>
+              <label className="meeting-room-name-input meeting-room-name-input-stacked">
                 房间标识
                 <input
                   value={signalRoomKey}
@@ -1882,20 +1928,37 @@ export function MeetingRoomPanel({ room, token, onBack, onEnd }: MeetingRoomPane
                 />
               </label>
               <div className="meeting-room-actions-inline">
-                <button className="meeting-btn-secondary" onClick={saveSignalConfig}>保存配置</button>
-                <button className="meeting-btn-secondary" onClick={clearSignalConfig}>切回本地</button>
+                <button className="meeting-btn-secondary" onClick={saveSignalRoomConfig}>保存房间</button>
                 <button className="meeting-btn-secondary" onClick={() => void copyInviteInfo()}>复制邀请</button>
               </div>
-              <h3 style={{ marginTop: 12 }}>在线参会人</h3>
+              <label className="meeting-room-name-input meeting-room-name-input-stacked">
+                粘贴邀请
+                <textarea
+                  value={inviteRawText}
+                  onChange={(e) => setInviteRawText(e.target.value)}
+                  className="meeting-room-invite-textarea"
+                  placeholder="粘贴完整邀请内容，自动识别房间标识"
+                />
+              </label>
+              <div className="meeting-room-actions-inline">
+                <button className="meeting-btn-secondary" onClick={importInviteInfo}>导入邀请</button>
+              </div>
+              <h3 className="meeting-room-subtitle">在线参会人</h3>
               <div className="meeting-room-participants">
-                {participants.length === 0 ? (
+                {(isWebMode ? remotePeerTiles.length : participants.length) === 0 ? (
                   <span className="meeting-room-participant-empty">暂无在线参会人</span>
                 ) : (
-                  participants.map((p) => (
-                    <span key={p.id} className="meeting-room-participant-chip">
-                      {p.user_name}
-                    </span>
-                  ))
+                  isWebMode
+                    ? remotePeerTiles.map((peer) => (
+                      <span key={peer.peer_id} className="meeting-room-participant-chip">
+                        {peer.user_name}
+                      </span>
+                    ))
+                    : participants.map((p) => (
+                      <span key={p.id} className="meeting-room-participant-chip">
+                        {p.user_name}
+                      </span>
+                    ))
                 )}
               </div>
               <p className="meeting-room-hint">当前为第1阶段会议页骨架，已支持房间状态与在线参会人同步，后续接入实时音视频流。</p>

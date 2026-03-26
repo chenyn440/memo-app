@@ -3136,6 +3136,11 @@ button:active {
   color: var(--color-text-primary);
 }
 
+.meeting-room-name-input-stacked {
+  grid-template-columns: 1fr;
+  gap: 6px;
+}
+
 .meeting-room-name-input input {
   height: 32px;
   padding: 0 10px;
@@ -3152,12 +3157,36 @@ button:active {
   box-shadow: 0 0 0 2px rgba(184, 123, 90, 0.14);
 }
 
+.meeting-room-invite-textarea {
+  min-height: 74px;
+  resize: vertical;
+  padding: 8px 10px;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  background: var(--color-surface);
+  color: var(--color-text-primary);
+  font-size: var(--text-sm);
+  line-height: 1.45;
+  font-family: var(--font-sans);
+}
+
+.meeting-room-invite-textarea:focus {
+  outline: none;
+  border-color: var(--color-primary);
+  box-shadow: 0 0 0 2px rgba(184, 123, 90, 0.14);
+}
+
 .meeting-room-actions-inline {
   display: flex;
   align-items: center;
   flex-wrap: wrap;
   gap: 8px;
-  margin: 2px 0 8px;
+  margin: 2px 0 10px;
+}
+
+.meeting-room-actions-inline .meeting-btn-secondary {
+  min-width: 88px;
+  min-height: 32px;
 }
 
 .meeting-room-media-error {
@@ -3176,6 +3205,10 @@ button:active {
   color: var(--color-text-muted);
 }
 
+.meeting-room-token-label-tight {
+  margin-top: 8px;
+}
+
 .meeting-room-token {
   display: block;
   font-size: 10px;
@@ -3186,6 +3219,10 @@ button:active {
   border-radius: var(--radius-sm);
   padding: 8px;
   background: var(--color-sidebar);
+}
+
+.meeting-room-subtitle {
+  margin-top: 12px !important;
 }
 
 .meeting-room-participants {
@@ -3288,4 +3325,131 @@ button:active {
   .planner-create-plan select {
     min-width: 140px;
   }
+}
+
+/* ===== Web Portal ===== */
+.web-portal-shell {
+  min-height: 100vh;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 20px;
+  background:
+    radial-gradient(circle at 15% 15%, rgba(184, 123, 90, 0.18), transparent 34%),
+    radial-gradient(circle at 85% 80%, rgba(47, 122, 73, 0.14), transparent 32%),
+    var(--color-background);
+}
+
+.web-card {
+  width: min(520px, 94vw);
+  border: 1px solid var(--color-border);
+  border-radius: 16px;
+  background: var(--color-surface);
+  box-shadow: var(--shadow-lg);
+  padding: 20px;
+}
+
+.web-card-wide {
+  width: min(680px, 94vw);
+}
+
+.web-card h1 {
+  margin: 0;
+  font-size: 30px;
+  line-height: 1.15;
+}
+
+.web-card p {
+  margin: 10px 0 14px;
+  color: var(--color-text-secondary);
+}
+
+.web-field {
+  display: grid;
+  gap: 6px;
+  margin-bottom: 10px;
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.web-field input,
+.web-field textarea {
+  min-height: 38px;
+  border: 1px solid var(--color-border);
+  border-radius: 10px;
+  padding: 8px 10px;
+  background: var(--color-surface);
+  color: var(--color-text-primary);
+  font-size: 14px;
+  font-family: var(--font-sans);
+}
+
+.web-field textarea {
+  min-height: 86px;
+  resize: vertical;
+}
+
+.web-field input:focus,
+.web-field textarea:focus {
+  outline: none;
+  border-color: var(--color-primary);
+  box-shadow: 0 0 0 3px rgba(184, 123, 90, 0.14);
+}
+
+.web-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 8px;
+}
+
+.web-primary-btn,
+.web-secondary-btn {
+  min-height: 36px;
+  border-radius: 10px;
+  padding: 7px 14px;
+  font-size: 13px;
+  font-weight: 700;
+  border: 1px solid transparent;
+}
+
+.web-primary-btn {
+  border-color: var(--color-primary);
+  background: var(--color-primary);
+  color: var(--color-text-inverse);
+}
+
+.web-primary-btn:hover {
+  border-color: var(--color-primary-hover);
+  background: var(--color-primary-hover);
+}
+
+.web-secondary-btn {
+  border-color: var(--color-border);
+  background: var(--color-surface);
+  color: var(--color-text-secondary);
+}
+
+.web-secondary-btn:hover {
+  border-color: var(--color-primary);
+  color: var(--color-primary);
+  background: var(--color-primary-lighter);
+}
+
+.web-link-anchor {
+  display: inline-flex;
+  align-items: center;
+  text-decoration: none;
+}
+
+.web-link-btn {
+  margin-top: 10px;
+  border: none;
+  background: transparent;
+  color: var(--color-text-muted);
+  font-size: 12px;
+}
+
+.web-link-btn:hover {
+  color: var(--color-primary);
 }

@@ -5,6 +5,7 @@ import {
 } from '../types';
 
 const MEETING_SIGNAL_SERVER_KEY = 'meeting_signal_server_url';
+const DEFAULT_MEETING_SIGNAL_SERVER_URL = 'https://aiyn.cloud:8081';
 
 const normalizeSignalServerUrl = (url: string): string => {
   const trimmed = url.trim();
@@ -17,7 +18,10 @@ const getSignalServerUrl = (): string => {
   const fromStorage = window.localStorage.getItem(MEETING_SIGNAL_SERVER_KEY) ?? '';
   if (fromStorage.trim()) return normalizeSignalServerUrl(fromStorage);
   const fromEnv = (import.meta as any)?.env?.VITE_MEETING_SIGNAL_SERVER_URL ?? '';
-  return normalizeSignalServerUrl(String(fromEnv));
+  if (String(fromEnv).trim()) {
+    return normalizeSignalServerUrl(String(fromEnv));
+  }
+  return normalizeSignalServerUrl(DEFAULT_MEETING_SIGNAL_SERVER_URL);
 };
 
 const setSignalServerUrl = (url: string): string => {

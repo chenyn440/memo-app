@@ -17,6 +17,174 @@ const PLAN_TYPE_LABELS: Record<Plan['plan_type'], string> = {
   meeting: '会议',
 };
 
+const WEB_MEETING_SESSION_KEY = 'web_meeting_session_v1';
+const WEB_MEETING_NAME_KEY = 'web_meeting_name_v1';
+const APP_DOWNLOAD_URL =
+  ((import.meta as any)?.env?.VITE_APP_DOWNLOAD_URL as string | undefined)?.trim()
+  || 'https://github.com/chenyongnuan/memo-app/releases';
+
+interface WebMeetingSession {
+  roomKey: string;
+  displayName: string;
+}
+
+function isTauriRuntime() {
+  if (typeof window === 'undefined') return false;
+  return Boolean((window as any).__TAURI_INTERNALS__ || (window as any).__TAURI__);
+}
+
+function readWebMeetingSession(): WebMeetingSession | null {
+  try {
+    const raw = sessionStorage.getItem(WEB_MEETING_SESSION_KEY);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw) as WebMeetingSession;
+    if (!parsed.roomKey?.trim() || !parsed.displayName?.trim()) return null;
+    return {
+      roomKey: parsed.roomKey.trim(),
+      displayName: parsed.displayName.trim(),
+    };
+  } catch {
+    return null;
+  }
+}
+
+function writeWebMeetingSession(session: WebMeetingSession) {
+  sessionStorage.setItem(WEB_MEETING_SESSION_KEY, JSON.stringify(session));
+}
+
+function WebPortalApp() {
+  const [path, setPath] = useState(() => window.location.pathname || '/');
+  const [displayName, setDisplayName] = useState(() => localStorage.getItem(WEB_MEETING_NAME_KEY)?.trim() || '');
+  const [roomKey, setRoomKey] = useState('');
+  const [inviteText, setInviteText] = useState('');
+
+  const navigate = (nextPath: string) => {
+    if (window.location.pathname !== nextPath) {
+      window.history.pushState({}, '', nextPath);
+    }
+    setPath(nextPath);
+  };
+
+  useEffect(() => {
+    const handlePop = () => setPath(window.location.pathname || '/');
+    window.addEventListener('popstate', handlePop);
+    return () => window.removeEventListener('popstate', handlePop);
+  }, []);
+
+  const importInvite = () => {
+    const raw = inviteText.trim();
+    if (!raw) {
+      showToast('请先粘贴邀请内容', 'error');
+      return;
+    }
+    const match = raw.match(/房间标识[：:]\s*([^\n\r]+)/);
+    const parsed = match?.[1]?.trim();
+    if (!parsed) {
+      showToast('未识别到房间标识', 'error');
+      return;
+    }
+    setRoomKey(parsed);
+    showToast('已识别房间标识', 'success');
+  };
+
+  const joinMeeting = () => {
+    const normalizedName = displayName.trim();
+    const normalizedRoom = roomKey.trim();
+    if (!normalizedName) {
+      showToast('请填写昵称', 'error');
+      return;
+    }
+    if (!normalizedRoom) {
+      showToast('请填写房间标识', 'error');
+      return;
+    }
+    localStorage.setItem(WEB_MEETING_NAME_KEY, normalizedName);
+    writeWebMeetingSession({ displayName: normalizedName, roomKey: normalizedRoom });
+    navigate('/meeting');
+  };
+
+  const leaveMeeting = () => {
+    sessionStorage.removeItem(WEB_MEETING_SESSION_KEY);
+    navigate('/join');
+  };
+
+  const session = readWebMeetingSession();
+
+  if (path === '/meeting') {
+    if (!session) {
+      return (
+        <div className="web-portal-shell">
+          <ToastContainer />
+          <div className="web-card">
+            <h1>网页会议</h1>
+            <p>会话已失效，请重新输入会议信息。</p>
+            <button className="web-primary-btn" onClick={() => navigate('/join')}>去入会</button>
+          </div>
+        </div>
+      );
+    }
+    return (
+      <>
+        <ToastContainer />
+        <MeetingRoomPanel
+          mode="web"
+          webSession={session}
+          onLeave={leaveMeeting}
+        />
+      </>
+    );
+  }
+
+  if (path === '/join') {
+    return (
+      <div className="web-portal-shell">
+        <ToastContainer />
+        <div className="web-card web-card-wide">
+          <h1>网页版进入会议</h1>
+          <p>输入昵称和房间标识后即可加入会议。</p>
+          <label className="web-field">
+            <span>昵称</span>
+            <input value={displayName} onChange={(e) => setDisplayName(e.target.value)} placeholder="例如 张三" />
+          </label>
+          <label className="web-field">
+            <span>房间标识</span>
+            <input value={roomKey} onChange={(e) => setRoomKey(e.target.value)} placeholder="例如 room-6-1774504138" />
+          </label>
+          <label className="web-field">
+            <span>粘贴邀请（可选）</span>
+            <textarea
+              value={inviteText}
+              onChange={(e) => setInviteText(e.target.value)}
+              placeholder="粘贴完整邀请信息，自动提取房间标识"
+            />
+          </label>
+          <div className="web-actions">
+            <button className="web-secondary-btn" onClick={importInvite}>识别邀请</button>
+            <button className="web-primary-btn" onClick={joinMeeting}>进入会议</button>
+          </div>
+          <button className="web-link-btn" onClick={() => navigate('/')}>返回首页</button>
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div className="web-portal-shell">
+      <ToastContainer />
+      <div className="web-card web-card-wide">
+        <h1>Memo 会议</h1>
+        <p>支持网页版快速入会，也支持下载桌面 App 获得完整能力。</p>
+        <div className="web-actions">
+          <button className="web-primary-btn" onClick={() => navigate('/join')}>网页版进入会议</button>
+          <a className="web-secondary-btn web-link-anchor" href={APP_DOWNLOAD_URL} target="_blank" rel="noreferrer">
+            下载桌面 App
+          </a>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function getNotesView(folderId: number | null, query: string) {
   const hasQuery = query.trim().length > 0;
   if (folderId !== null && hasQuery) return 'folder-search' as const;
@@ -68,7 +236,7 @@ function ThemeToggle() {
   );
 }
 
-function App() {
+function DesktopApp() {
   const [appMode, setAppMode] = useState<'notes' | 'plans'>('notes');
   const [plannerPlans, setPlannerPlans] = useState<Plan[]>([]);
   const [plannerSelectedPlanId, setPlannerSelectedPlanId] = useState<number | null>(null);
@@ -405,6 +573,13 @@ function App() {
       </div>
     </>
   );
+}
+
+function App() {
+  if (!isTauriRuntime()) {
+    return <WebPortalApp />;
+  }
+  return <DesktopApp />;
 }
 
 export default App;
