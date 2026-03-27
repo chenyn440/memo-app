@@ -1,4 +1,4 @@
-import { forwardRef, useCallback, useEffect, useImperativeHandle, useRef, useState } from 'react';
+import { forwardRef, useCallback, useEffect, useImperativeHandle, useMemo, useRef, useState } from 'react';
 import { save } from '@tauri-apps/plugin-dialog';
 import { EditorContent, useEditor } from '@tiptap/react';
 import { Node as TiptapNode, mergeAttributes } from '@tiptap/core';
@@ -132,6 +132,18 @@ function computeSourceFingerprint(title: string, content: string): string {
   return (hash >>> 0).toString(16);
 }
 
+function buildSummarizationInput(content: string): string {
+  if (!content) return '';
+  let normalized = content;
+  normalized = normalized.replace(/<audio[\s\S]*?<\/audio>/gi, '[录音片段]');
+  normalized = normalized.replace(/data:audio\/[a-z0-9.+-]+;base64,[a-z0-9+/=\s]+/gi, '[录音数据]');
+  const maxChars = 24_000;
+  if (normalized.length > maxChars) {
+    normalized = `${normalized.slice(0, maxChars)}\n\n[内容过长，已截断后总结]`;
+  }
+  return normalized;
+}
+
 function parseTranslations(raw: string | undefined, fallbackTitle: string): TranslationMap {
   let parsed: unknown = {};
   try {
@@ -205,6 +217,15 @@ export const NoteEditor = forwardRef<NoteEditorHandle, NoteEditorProps>(function
   const currentFolder = folderOptions.find((opt) => opt.id === (note?.folder_id ?? null)) ?? folderOptions[0];
   const noteSourceFingerprint = note ? computeSourceFingerprint(note.title, note.content) : '';
   const translationsMap = parseTranslations(latestTranslationsRef.current, note?.title || '');
+  const summaryHistoryItems = useMemo(() => {
+    let parsed: Array<{ time?: string; text?: string }> = [];
+    try {
+      parsed = JSON.parse(note?.summary_history || '[]');
+    } catch {
+      parsed = [];
+    }
+    return Array.isArray(parsed) ? parsed : [];
+  }, [note?.summary_history]);
   
   // CRITICAL: Reset Ref ONLY when note ID changes. This ensures a clean state when switching between notes.
   useEffect(() => {
@@ -380,13 +401,16 @@ export const NoteEditor = forwardRef<NoteEditorHandle, NoteEditorProps>(function
     if (!aiConfig.apiKey) { setAiConfigOpen(true); showToast('请配置 API Key', 'info'); return; }
     setIsSummarizing(true);
     try {
-      const summary = await aiService.summarize(markdownContent, aiConfig);
-      const history = JSON.parse(note.summary_history || '[]');
+      const summaryInput = buildSummarizationInput(markdownContent);
+      const summary = await aiService.summarize(summaryInput, aiConfig);
+      const history = summaryHistoryItems;
       const updatedHistory = JSON.stringify([{ time: new Date().toLocaleString(), text: summary }, ...history]);
       await onSave(note.id, title, note.content, note.folder_id ?? null, updatedHistory, latestTranslationsRef.current);
       setSummaryHistoryOpen(true);
       showToast('总结生成成功', 'success');
-    } catch { showToast('总结失败', 'error'); } finally { setIsSummarizing(false); }
+    } catch (error: any) {
+      showToast(`总结失败：${error?.message || '请检查模型配置或网络'}`, 'error');
+    } finally { setIsSummarizing(false); }
   };
 
   const handleTranslate = async (targetLanguage: string) => {
@@ -692,6 +716,19 @@ export const NoteEditor = forwardRef<NoteEditorHandle, NoteEditorProps>(function
             <button onClick={handleSummarize} disabled={isSummarizing || !markdownContent.trim()} className={`editor-icon-btn ai-summary-btn ${isSummarizing ? 'loading' : ''}`} title="智能总结" style={{ border: 'none', background: 'transparent' }}>
               <svg width="15" height="15" viewBox="0 0 24 24" fill="none" className={isSummarizing ? 'spin' : ''}><path d="M12 3a9 9 0 1 0 9 9 1 1 0 1 0-2 0 7 7 0 1 1-7-7 1 1 0 0 0 0-2z" fill="currentColor" /><path d="M12 7a5 5 0 1 0 5 5 1 1 0 1 0-2 0 3 3 0 1 1-3-3 1 1 0 0 0 0-2z" fill="currentColor" /></svg>
             </button>
+            <button
+              onClick={() => setSummaryHistoryOpen(true)}
+              disabled={summaryHistoryItems.length === 0}
+              className="editor-icon-btn"
+              title={summaryHistoryItems.length === 0 ? '暂无历史总结' : '历史总结'}
+              style={{ border: 'none', background: 'transparent' }}
+            >
+              <svg width="15" height="15" viewBox="0 0 24 24" fill="none">
+                <path d="M12 8V12L14.5 14.5" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" />
+                <path d="M21 12A9 9 0 1 1 18.2 5.4" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" />
+                <path d="M21 3V9H15" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" />
+              </svg>
+            </button>
             <button 
               onClick={() => setTranslateModalOpen(true)} 
               className={`editor-icon-btn ${isTranslating ? 'loading' : ''}`} 
@@ -838,17 +875,13 @@ export const NoteEditor = forwardRef<NoteEditorHandle, NoteEditorProps>(function
           <div className="summary-history-drawer">
             <div className="summary-history-header"><h4>历史总结</h4><button onClick={() => setSummaryHistoryOpen(false)}>×</button></div>
             <div className="summary-history-list">
-              {(() => {
-                let h: Array<{ time?: string; text?: string }> = [];
-                try { h = JSON.parse(note?.summary_history || '[]'); } catch {}
-                return h.map((item, i: number) => (
-                  <div key={i} className="summary-history-item">
-                    <div className="summary-history-time">{item.time}</div>
-                    <div className="summary-history-text">{item.text}</div>
-                    <button className="summary-history-insert" onClick={() => { if (editor) editor.chain().focus().insertContent(`\n\n> **总结：**\n> ${item.text}\n\n`).run(); }}>引用到正文</button>
-                  </div>
-                ));
-              })()}
+              {summaryHistoryItems.map((item, i: number) => (
+                <div key={i} className="summary-history-item">
+                  <div className="summary-history-time">{item.time}</div>
+                  <div className="summary-history-text">{item.text}</div>
+                  <button className="summary-history-insert" onClick={() => { if (editor) editor.chain().focus().insertContent(`\n\n> **总结：**\n> ${item.text}\n\n`).run(); }}>引用到正文</button>
+                </div>
+              ))}
             </div>
           </div>
         )}
