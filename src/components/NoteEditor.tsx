@@ -105,6 +105,17 @@ function hasMediaRecorderSupport(): boolean {
   );
 }
 
+function canPlayAudioMimeType(mime: string): boolean {
+  if (typeof document === 'undefined') return true;
+  const audio = document.createElement('audio');
+  const direct = audio.canPlayType(mime);
+  if (direct === 'probably' || direct === 'maybe') return true;
+  const noCodecs = mime.split(';')[0]?.trim();
+  if (!noCodecs) return false;
+  const fallback = audio.canPlayType(noCodecs);
+  return fallback === 'probably' || fallback === 'maybe';
+}
+
 function getFolderOptions(folders: Folder[]) {
   return [
     { id: null, name: '未分类', color: null as string | null },
@@ -507,7 +518,8 @@ export const NoteEditor = forwardRef<NoteEditorHandle, NoteEditorProps>(function
           return;
         }
 
-        const blob = new Blob(chunks, { type: recorder.mimeType || 'audio/webm' });
+        const blobType = recorder.mimeType || (chunks[0] instanceof Blob ? chunks[0].type : '') || 'audio/webm';
+        const blob = new Blob(chunks, { type: blobType });
         if (!blob.size) {
           resolve({ ok: false, reason: 'empty-audio' });
           return;
@@ -525,7 +537,8 @@ export const NoteEditor = forwardRef<NoteEditorHandle, NoteEditorProps>(function
           }
           const seconds = Math.max(1, Math.round((endedAt - startedAt) / 1000));
           const startedText = new Date(startedAt).toLocaleString();
-          const block = `\n<p>🎙️ 录音片段（开始：${startedText}，时长：${seconds}秒）</p>\n<audio src="${dataUrl}" controls preload="metadata"></audio>\n`;
+          const sourceType = blobType.split(';')[0]?.trim() || 'audio/webm';
+          const block = `\n<p>🎙️ 录音片段（开始：${startedText}，时长：${seconds}秒）</p>\n<audio controls preload="metadata"><source src="${dataUrl}" type="${sourceType}"></audio>\n`;
           editor.chain().focus('end').insertContent(block).run();
           resolve({ ok: true });
         };
@@ -553,16 +566,18 @@ export const NoteEditor = forwardRef<NoteEditorHandle, NoteEditorProps>(function
 
     const stream = await navigator.mediaDevices.getUserMedia({ audio: true, video: false });
     const preferredMimeTypes = [
-      'audio/mp4;codecs=mp4a.40.2',
-      'audio/mp4',
-      'audio/aac',
       'audio/webm;codecs=opus',
       'audio/webm',
       'audio/ogg;codecs=opus',
+      'audio/mp4;codecs=mp4a.40.2',
+      'audio/mp4',
+      'audio/aac',
     ];
     const supportedMimeType = preferredMimeTypes.find((mime) => {
       try {
-        return typeof MediaRecorder.isTypeSupported === 'function' && MediaRecorder.isTypeSupported(mime);
+        return typeof MediaRecorder.isTypeSupported === 'function'
+          && MediaRecorder.isTypeSupported(mime)
+          && canPlayAudioMimeType(mime);
       } catch {
         return false;
       }
