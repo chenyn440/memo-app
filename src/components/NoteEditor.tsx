@@ -537,8 +537,7 @@ export const NoteEditor = forwardRef<NoteEditorHandle, NoteEditorProps>(function
           }
           const seconds = Math.max(1, Math.round((endedAt - startedAt) / 1000));
           const startedText = new Date(startedAt).toLocaleString();
-          const sourceType = blobType.split(';')[0]?.trim() || 'audio/webm';
-          const block = `\n<p>🎙️ 录音片段（开始：${startedText}，时长：${seconds}秒）</p>\n<audio controls preload="metadata"><source src="${dataUrl}" type="${sourceType}"></audio>\n`;
+          const block = `\n<p>🎙️ 录音片段（开始：${startedText}，时长：${seconds}秒）</p>\n<audio src="${dataUrl}" controls preload="metadata"></audio>\n`;
           editor.chain().focus('end').insertContent(block).run();
           resolve({ ok: true });
         };
