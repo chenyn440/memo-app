@@ -35,6 +35,7 @@ type TranslationEntry = {
   sourceFingerprint?: string;
 };
 type TranslationMap = Record<string, TranslationEntry>;
+const MAX_AUDIO_DATA_URL_LENGTH = 3_500_000;
 
 const turndownService = new TurndownService({
   headingStyle: 'atx',
@@ -95,22 +96,13 @@ function formatUpdatedAt(dateStr: string): string {
   return `${year}/${month}/${day} ${hours}:${minutes}`;
 }
 
-type WebSpeechRecognitionCtor = new () => {
-  lang: string;
-  continuous: boolean;
-  interimResults: boolean;
-  maxAlternatives: number;
-  onresult: ((event: any) => void) | null;
-  onerror: ((event: any) => void) | null;
-  onend: (() => void) | null;
-  start: () => void;
-  stop: () => void;
-};
-
-function getWebSpeechRecognitionCtor(): WebSpeechRecognitionCtor | null {
-  if (typeof window === 'undefined') return null;
-  const w = window as any;
-  return (w.SpeechRecognition || w.webkitSpeechRecognition || null) as WebSpeechRecognitionCtor | null;
+function hasMediaRecorderSupport(): boolean {
+  if (typeof window === 'undefined') return false;
+  return Boolean(
+    window.navigator?.mediaDevices
+    && typeof window.navigator.mediaDevices.getUserMedia === 'function'
+    && typeof MediaRecorder !== 'undefined'
+  );
 }
 
 function getFolderOptions(folders: Folder[]) {
@@ -191,18 +183,13 @@ export const NoteEditor = forwardRef<NoteEditorHandle, NoteEditorProps>(function
   const lastSavedRef = useRef<{ title: string; content: string }>({ title: '', content: '' });
   const applyingRemoteContentRef = useRef(false);
   const latestTranslationsRef = useRef<string>(note?.translations || '{}');
-  const webSpeechRecognitionRef = useRef<InstanceType<WebSpeechRecognitionCtor> | null>(null);
-  const webSpeechLastFinalRef = useRef('');
-  const webSpeechPendingInterimRef = useRef('');
-  const webSpeechInterimTimerRef = useRef<number | null>(null);
   const desktopMediaRecorderRef = useRef<MediaRecorder | null>(null);
   const desktopMediaStreamRef = useRef<MediaStream | null>(null);
   const desktopMediaChunksRef = useRef<BlobPart[]>([]);
   const desktopRecordStartedAtRef = useRef<number | null>(null);
   const { aiConfig, setAIConfig, currentLanguage, setCurrentLanguage, setSelectedNote } = useStore();
   const tauriRuntime = api.isTauriRuntime();
-  const webSpeechCtor = tauriRuntime ? null : getWebSpeechRecognitionCtor();
-  const speechSupported = tauriRuntime || Boolean(webSpeechCtor);
+  const speechSupported = hasMediaRecorderSupport();
   const folderOptions = getFolderOptions(folders);
   const currentFolder = folderOptions.find((opt) => opt.id === (note?.folder_id ?? null)) ?? folderOptions[0];
   const noteSourceFingerprint = note ? computeSourceFingerprint(note.title, note.content) : '';
@@ -297,9 +284,14 @@ export const NoteEditor = forwardRef<NoteEditorHandle, NoteEditorProps>(function
     if (savedTimeoutRef.current) clearTimeout(savedTimeoutRef.current);
     savedTimeoutRef.current = window.setTimeout(() => setSaveStatus('idle'), 2000);
       return true;
-    } catch (error) {
+    } catch (error: any) {
       setSaveStatus('error');
-      showToast('保存失败', 'error');
+      const message = String(error?.message || error || '');
+      if (message.includes('QuotaExceededError') || message.toLowerCase().includes('quota')) {
+        showToast('本地存储已满，请删除部分录音或缩短时长', 'error');
+      } else {
+        showToast('保存失败', 'error');
+      }
       return false;
     }
   }, [note, onSave, currentLanguage]);
@@ -490,115 +482,7 @@ export const NoteEditor = forwardRef<NoteEditorHandle, NoteEditorProps>(function
     try { await onDelete(note.id); } catch { showToast('删除失败', 'error'); } finally { setIsDeleting(false); }
   };
 
-  const stopWebSpeech = useCallback(() => {
-    if (webSpeechInterimTimerRef.current) {
-      window.clearTimeout(webSpeechInterimTimerRef.current);
-      webSpeechInterimTimerRef.current = null;
-    }
-    const current = webSpeechRecognitionRef.current;
-    if (!current) return;
-    current.onresult = null;
-    current.onerror = null;
-    current.onend = null;
-    try {
-      current.stop();
-    } catch {
-      // ignore
-    }
-    webSpeechRecognitionRef.current = null;
-  }, []);
-
-  const startWebSpeech = useCallback(() => {
-    if (!webSpeechCtor) throw new Error('当前浏览器不支持语音识别');
-    if (!editor) throw new Error('编辑器未就绪');
-    stopWebSpeech();
-    const recognition = new webSpeechCtor();
-    recognition.lang = (navigator.language || 'zh-CN').toLowerCase().startsWith('zh')
-      ? 'zh-CN'
-      : (navigator.language || 'en-US');
-    recognition.continuous = true;
-    recognition.interimResults = true;
-    recognition.maxAlternatives = 3;
-    const commitText = (raw: string) => {
-      const text = String(raw || '').trim();
-      if (!text) return;
-      if (text === webSpeechLastFinalRef.current) return;
-      webSpeechLastFinalRef.current = text;
-      editor.chain().focus().insertContent(text).run();
-    };
-    const scheduleInterimCommit = (raw: string) => {
-      const text = String(raw || '').trim();
-      if (!text) return;
-      webSpeechPendingInterimRef.current = text;
-      if (webSpeechInterimTimerRef.current) {
-        window.clearTimeout(webSpeechInterimTimerRef.current);
-      }
-      webSpeechInterimTimerRef.current = window.setTimeout(() => {
-        if (webSpeechPendingInterimRef.current) {
-          commitText(webSpeechPendingInterimRef.current);
-          webSpeechPendingInterimRef.current = '';
-        }
-        webSpeechInterimTimerRef.current = null;
-      }, 700);
-    };
-    recognition.onresult = (event: any) => {
-      let finalText = '';
-      let interimText = '';
-      for (let i = event.resultIndex; i < event.results.length; i += 1) {
-        const result = event.results[i];
-        const text = String(result?.[0]?.transcript || '').trim();
-        if (!text) continue;
-        if (result.isFinal) finalText += text;
-        else interimText += text;
-      }
-      const normalized = finalText.trim();
-      if (normalized) {
-        if (webSpeechInterimTimerRef.current) {
-          window.clearTimeout(webSpeechInterimTimerRef.current);
-          webSpeechInterimTimerRef.current = null;
-        }
-        webSpeechPendingInterimRef.current = '';
-        commitText(normalized);
-        return;
-      }
-      if (interimText.trim()) {
-        scheduleInterimCommit(interimText);
-      }
-    };
-    recognition.onerror = (event: any) => {
-      if (webSpeechPendingInterimRef.current) {
-        commitText(webSpeechPendingInterimRef.current);
-        webSpeechPendingInterimRef.current = '';
-      }
-      const code = String(event?.error || '');
-      if (code === 'not-allowed' || code === 'service-not-allowed') {
-        showToast('麦克风权限被拒绝', 'error');
-      } else if (code === 'audio-capture') {
-        showToast('未检测到可用麦克风', 'error');
-      } else if (code === 'no-speech') {
-        showToast('未检测到语音输入', 'info');
-      } else {
-        showToast('语音识别失败', 'error');
-      }
-      webSpeechRecognitionRef.current = null;
-      setIsListening(false);
-    };
-    recognition.onend = () => {
-      if (webSpeechPendingInterimRef.current) {
-        commitText(webSpeechPendingInterimRef.current);
-        webSpeechPendingInterimRef.current = '';
-      }
-      webSpeechRecognitionRef.current = null;
-      setIsListening(false);
-    };
-    recognition.start();
-    webSpeechRecognitionRef.current = recognition;
-    webSpeechLastFinalRef.current = '';
-    webSpeechPendingInterimRef.current = '';
-    setIsListening(true);
-  }, [editor, stopWebSpeech, webSpeechCtor]);
-
-  const stopDesktopRecording = useCallback(async (persist: boolean): Promise<boolean> => {
+  const stopDesktopRecording = useCallback(async (persist: boolean): Promise<{ ok: boolean; reason?: string }> => {
     const recorder = desktopMediaRecorderRef.current;
     const stream = desktopMediaStreamRef.current;
     const chunks = desktopMediaChunksRef.current;
@@ -608,40 +492,44 @@ export const NoteEditor = forwardRef<NoteEditorHandle, NoteEditorProps>(function
 
     if (!recorder || recorder.state === 'inactive') {
       stream?.getTracks().forEach((track) => track.stop());
-      return false;
+      return { ok: false, reason: 'inactive' };
     }
 
     const startedAt = desktopRecordStartedAtRef.current ?? Date.now();
     const endedAt = Date.now();
     desktopRecordStartedAtRef.current = null;
 
-    const inserted = await new Promise<boolean>((resolve) => {
+    const inserted = await new Promise<{ ok: boolean; reason?: string }>((resolve) => {
       const finish = () => {
         stream?.getTracks().forEach((track) => track.stop());
         if (!persist || !editor) {
-          resolve(false);
+          resolve({ ok: false, reason: 'skip-persist' });
           return;
         }
 
         const blob = new Blob(chunks, { type: recorder.mimeType || 'audio/webm' });
         if (!blob.size) {
-          resolve(false);
+          resolve({ ok: false, reason: 'empty-audio' });
           return;
         }
         const reader = new FileReader();
         reader.onload = () => {
           const dataUrl = String(reader.result || '');
           if (!dataUrl) {
-            resolve(false);
+            resolve({ ok: false, reason: 'empty-data-url' });
+            return;
+          }
+          if (dataUrl.length > MAX_AUDIO_DATA_URL_LENGTH) {
+            resolve({ ok: false, reason: 'audio-too-large' });
             return;
           }
           const seconds = Math.max(1, Math.round((endedAt - startedAt) / 1000));
           const startedText = new Date(startedAt).toLocaleString();
           const block = `\n<p>🎙️ 录音片段（开始：${startedText}，时长：${seconds}秒）</p>\n<audio src="${dataUrl}" controls preload="metadata"></audio>\n`;
           editor.chain().focus('end').insertContent(block).run();
-          resolve(true);
+          resolve({ ok: true });
         };
-        reader.onerror = () => resolve(false);
+        reader.onerror = () => resolve({ ok: false, reason: 'read-failed' });
         reader.readAsDataURL(blob);
       };
 
@@ -701,31 +589,29 @@ export const NoteEditor = forwardRef<NoteEditorHandle, NoteEditorProps>(function
     if (!speechSupported) { showToast('当前环境不支持语音输入', 'info'); return; }
     try {
       if (isListening) {
-        if (tauriRuntime) {
-          const inserted = await stopDesktopRecording(true);
-          if (inserted) showToast('录音片段已添加到笔记', 'success');
-          else showToast('录音失败：未采集到音频数据', 'error');
+        const result = await stopDesktopRecording(true);
+        if (result.ok) {
+          showToast('录音片段已添加到笔记', 'success');
+        } else if (result.reason === 'audio-too-large') {
+          showToast('录音过长，请缩短时长后重试', 'error');
+        } else if (result.reason === 'empty-audio') {
+          showToast('录音失败：未采集到音频数据', 'error');
         } else {
-          stopWebSpeech();
+          showToast('录音结束', 'info');
         }
         setIsListening(false);
         setSpeechInterimText('');
-      } else if (tauriRuntime) {
-        await startDesktopRecording();
       } else {
-        startWebSpeech();
+        await startDesktopRecording();
       }
     } catch (error: any) {
       showToast(error?.message || '语音启动失败', 'error');
-      if (!tauriRuntime) stopWebSpeech();
-      if (tauriRuntime) {
-        await stopDesktopRecording(false).catch(() => {});
-      }
+      await stopDesktopRecording(false).catch(() => {});
       setIsListening(false);
       setSpeechInterimText('');
       desktopRecordStartedAtRef.current = null;
     }
-  }, [isListening, speechSupported, startDesktopRecording, startWebSpeech, stopDesktopRecording, stopWebSpeech, tauriRuntime]);
+  }, [isListening, speechSupported, startDesktopRecording, stopDesktopRecording]);
 
   const previousNoteIdRef = useRef<number | null | undefined>(note?.id);
   useEffect(() => {
@@ -733,27 +619,17 @@ export const NoteEditor = forwardRef<NoteEditorHandle, NoteEditorProps>(function
     previousNoteIdRef.current = note?.id;
     if (previous === note?.id) return;
     if (!isListening) return;
-    if (tauriRuntime) {
-      void stopDesktopRecording(false).finally(() => {
-        setIsListening(false);
-        setSpeechInterimText('');
-        desktopRecordStartedAtRef.current = null;
-      });
-    } else {
-      stopWebSpeech();
+    void stopDesktopRecording(false).finally(() => {
       setIsListening(false);
       setSpeechInterimText('');
-    }
-  }, [isListening, note?.id, stopDesktopRecording, stopWebSpeech, tauriRuntime]);
+      desktopRecordStartedAtRef.current = null;
+    });
+  }, [isListening, note?.id, stopDesktopRecording]);
 
   useEffect(() => () => {
-    if (tauriRuntime) {
-      void stopDesktopRecording(false).catch(() => {});
-      desktopRecordStartedAtRef.current = null;
-    } else {
-      stopWebSpeech();
-    }
-  }, [stopDesktopRecording, stopWebSpeech, tauriRuntime]);
+    void stopDesktopRecording(false).catch(() => {});
+    desktopRecordStartedAtRef.current = null;
+  }, [stopDesktopRecording]);
 
   const handleFolderChange = async (folderIdValue: string) => {
     if (!note) return;
