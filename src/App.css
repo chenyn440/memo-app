@@ -1028,6 +1028,24 @@ button:active {
   background: var(--color-sidebar);
 }
 
+.editor-content audio[controls],
+.editor-prosemirror audio[controls] {
+  width: min(100%, 350px);
+  display: block;
+  margin: 8px 0 14px;
+  border-radius: 12px;
+  border: 1px solid var(--color-border);
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.96), rgba(248, 244, 240, 0.96));
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.06);
+  padding: 4px;
+}
+
+.editor-content audio[controls]:hover,
+.editor-prosemirror audio[controls]:hover {
+  border-color: var(--color-primary);
+  box-shadow: 0 6px 16px rgba(184, 123, 90, 0.18);
+}
+
 .image-error {
   padding: var(--space-3) var(--space-4);
   margin: var(--space-2) 0;

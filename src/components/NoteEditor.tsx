@@ -1,7 +1,7 @@
 import { forwardRef, useCallback, useEffect, useImperativeHandle, useRef, useState } from 'react';
 import { save } from '@tauri-apps/plugin-dialog';
-import { listen, type UnlistenFn } from '@tauri-apps/api/event';
 import { EditorContent, useEditor } from '@tiptap/react';
+import { Node as TiptapNode, mergeAttributes } from '@tiptap/core';
 import StarterKit from '@tiptap/starter-kit';
 import { Table } from '@tiptap/extension-table';
 import TableRow from '@tiptap/extension-table-row';
@@ -42,6 +42,33 @@ const turndownService = new TurndownService({
   bulletListMarker: '-',
 });
 turndownService.use(gfm);
+turndownService.addRule('audio', {
+  filter: 'audio',
+  replacement: (_content, node) => {
+    const html = (node as HTMLElement).outerHTML || '';
+    return `\n${html}\n`;
+  },
+});
+
+const AudioExtension = TiptapNode.create({
+  name: 'audio',
+  group: 'block',
+  atom: true,
+  selectable: true,
+  addAttributes() {
+    return {
+      src: { default: '' },
+      controls: { default: true },
+      preload: { default: 'metadata' },
+    };
+  },
+  parseHTML() {
+    return [{ tag: 'audio[src]' }];
+  },
+  renderHTML({ HTMLAttributes }) {
+    return ['audio', mergeAttributes({ controls: 'true', preload: 'metadata' }, HTMLAttributes)];
+  },
+});
 
 function markdownToHtml(markdown: string): string {
   try {
@@ -136,6 +163,7 @@ export const NoteEditor = forwardRef<NoteEditorHandle, NoteEditorProps>(function
   const [markdownContent, setMarkdownContent] = useState(note?.content || '');
   const [saveStatus, setSaveStatus] = useState<SaveStatus>('idle');
   const [isListening, setIsListening] = useState(false);
+  const [speechInterimText, setSpeechInterimText] = useState('');
   const [isDeleting, setIsDeleting] = useState(false);
   const [aiConfigOpen, setAiConfigOpen] = useState(false);
   const [isSummarizing, setIsSummarizing] = useState(false);
@@ -167,7 +195,10 @@ export const NoteEditor = forwardRef<NoteEditorHandle, NoteEditorProps>(function
   const webSpeechLastFinalRef = useRef('');
   const webSpeechPendingInterimRef = useRef('');
   const webSpeechInterimTimerRef = useRef<number | null>(null);
-  const speechCommitQueueRef = useRef<Promise<void>>(Promise.resolve());
+  const desktopMediaRecorderRef = useRef<MediaRecorder | null>(null);
+  const desktopMediaStreamRef = useRef<MediaStream | null>(null);
+  const desktopMediaChunksRef = useRef<BlobPart[]>([]);
+  const desktopRecordStartedAtRef = useRef<number | null>(null);
   const { aiConfig, setAIConfig, currentLanguage, setCurrentLanguage, setSelectedNote } = useStore();
   const tauriRuntime = api.isTauriRuntime();
   const webSpeechCtor = tauriRuntime ? null : getWebSpeechRecognitionCtor();
@@ -194,6 +225,7 @@ export const NoteEditor = forwardRef<NoteEditorHandle, NoteEditorProps>(function
       StarterKit.configure({ heading: { levels: [1, 2] } }),
       Table.configure({ resizable: false }),
       TableRow, TableHeader, TableCell,
+      AudioExtension,
     ],
     content: markdownToHtml(markdownContent || ''), // Initial content
     onUpdate: ({ editor: nextEditor }) => {
@@ -566,93 +598,162 @@ export const NoteEditor = forwardRef<NoteEditorHandle, NoteEditorProps>(function
     setIsListening(true);
   }, [editor, stopWebSpeech, webSpeechCtor]);
 
-  const commitSpeechText = useCallback((raw: string, shouldPolish: boolean) => {
-    const text = String(raw || '').trim();
-    if (!text || !editor) return;
-    speechCommitQueueRef.current = speechCommitQueueRef.current.then(async () => {
-      let output = text;
-      if (shouldPolish && aiConfig.apiKey?.trim()) {
-        try {
-          const polished = await aiService.polishSpeech(text, aiConfig);
-          output = polished?.trim() || text;
-        } catch {
-          output = text;
+  const stopDesktopRecording = useCallback(async (persist: boolean): Promise<boolean> => {
+    const recorder = desktopMediaRecorderRef.current;
+    const stream = desktopMediaStreamRef.current;
+    const chunks = desktopMediaChunksRef.current;
+    desktopMediaRecorderRef.current = null;
+    desktopMediaStreamRef.current = null;
+    desktopMediaChunksRef.current = [];
+
+    if (!recorder || recorder.state === 'inactive') {
+      stream?.getTracks().forEach((track) => track.stop());
+      return false;
+    }
+
+    const startedAt = desktopRecordStartedAtRef.current ?? Date.now();
+    const endedAt = Date.now();
+    desktopRecordStartedAtRef.current = null;
+
+    const inserted = await new Promise<boolean>((resolve) => {
+      const finish = () => {
+        stream?.getTracks().forEach((track) => track.stop());
+        if (!persist || !editor) {
+          resolve(false);
+          return;
         }
-      }
-      if (output.trim()) {
-        editor.chain().focus().insertContent(output).run();
+
+        const blob = new Blob(chunks, { type: recorder.mimeType || 'audio/webm' });
+        if (!blob.size) {
+          resolve(false);
+          return;
+        }
+        const reader = new FileReader();
+        reader.onload = () => {
+          const dataUrl = String(reader.result || '');
+          if (!dataUrl) {
+            resolve(false);
+            return;
+          }
+          const seconds = Math.max(1, Math.round((endedAt - startedAt) / 1000));
+          const startedText = new Date(startedAt).toLocaleString();
+          const block = `\n<p>🎙️ 录音片段（开始：${startedText}，时长：${seconds}秒）</p>\n<audio src="${dataUrl}" controls preload="metadata"></audio>\n`;
+          editor.chain().focus('end').insertContent(block).run();
+          resolve(true);
+        };
+        reader.onerror = () => resolve(false);
+        reader.readAsDataURL(blob);
+      };
+
+      recorder.onstop = finish;
+      try {
+        recorder.stop();
+      } catch {
+        finish();
       }
     });
-  }, [aiConfig, editor]);
+    return inserted;
+  }, [editor]);
 
-  const toggleSpeech = async () => {
+  const startDesktopRecording = useCallback(async () => {
+    if (!navigator.mediaDevices?.getUserMedia) {
+      throw new Error('当前环境不支持录音');
+    }
+    if (typeof MediaRecorder === 'undefined') {
+      throw new Error('当前环境不支持音频录制');
+    }
+
+    const stream = await navigator.mediaDevices.getUserMedia({ audio: true, video: false });
+    const preferredMimeTypes = [
+      'audio/mp4;codecs=mp4a.40.2',
+      'audio/mp4',
+      'audio/aac',
+      'audio/webm;codecs=opus',
+      'audio/webm',
+      'audio/ogg;codecs=opus',
+    ];
+    const supportedMimeType = preferredMimeTypes.find((mime) => {
+      try {
+        return typeof MediaRecorder.isTypeSupported === 'function' && MediaRecorder.isTypeSupported(mime);
+      } catch {
+        return false;
+      }
+    });
+    const recorder = supportedMimeType
+      ? new MediaRecorder(stream, { mimeType: supportedMimeType })
+      : new MediaRecorder(stream);
+
+    desktopMediaChunksRef.current = [];
+    recorder.ondataavailable = (event: BlobEvent) => {
+      if (event.data && event.data.size > 0) {
+        desktopMediaChunksRef.current.push(event.data);
+      }
+    };
+    recorder.start(250);
+    desktopMediaRecorderRef.current = recorder;
+    desktopMediaStreamRef.current = stream;
+    desktopRecordStartedAtRef.current = Date.now();
+    setSpeechInterimText('录音中...');
+    setIsListening(true);
+  }, []);
+
+  const toggleSpeech = useCallback(async () => {
     if (!speechSupported) { showToast('当前环境不支持语音输入', 'info'); return; }
     try {
       if (isListening) {
-        if (tauriRuntime) await api.stopSpeech();
-        else stopWebSpeech();
+        if (tauriRuntime) {
+          const inserted = await stopDesktopRecording(true);
+          if (inserted) showToast('录音片段已添加到笔记', 'success');
+          else showToast('录音失败：未采集到音频数据', 'error');
+        } else {
+          stopWebSpeech();
+        }
         setIsListening(false);
+        setSpeechInterimText('');
       } else if (tauriRuntime) {
-        await api.startSpeech();
-        setIsListening(true);
+        await startDesktopRecording();
       } else {
         startWebSpeech();
       }
     } catch (error: any) {
       showToast(error?.message || '语音启动失败', 'error');
       if (!tauriRuntime) stopWebSpeech();
+      if (tauriRuntime) {
+        await stopDesktopRecording(false).catch(() => {});
+      }
       setIsListening(false);
+      setSpeechInterimText('');
+      desktopRecordStartedAtRef.current = null;
     }
-  };
+  }, [isListening, speechSupported, startDesktopRecording, startWebSpeech, stopDesktopRecording, stopWebSpeech, tauriRuntime]);
 
+  const previousNoteIdRef = useRef<number | null | undefined>(note?.id);
   useEffect(() => {
+    const previous = previousNoteIdRef.current;
+    previousNoteIdRef.current = note?.id;
+    if (previous === note?.id) return;
     if (!isListening) return;
     if (tauriRuntime) {
-      void api.stopSpeech().catch(() => {}).finally(() => setIsListening(false));
+      void stopDesktopRecording(false).finally(() => {
+        setIsListening(false);
+        setSpeechInterimText('');
+        desktopRecordStartedAtRef.current = null;
+      });
     } else {
       stopWebSpeech();
       setIsListening(false);
+      setSpeechInterimText('');
     }
-  }, [note?.id]);
+  }, [isListening, note?.id, stopDesktopRecording, stopWebSpeech, tauriRuntime]);
 
   useEffect(() => () => {
     if (tauriRuntime) {
-      void api.stopSpeech().catch(() => {});
+      void stopDesktopRecording(false).catch(() => {});
+      desktopRecordStartedAtRef.current = null;
     } else {
       stopWebSpeech();
     }
-  }, [stopWebSpeech, tauriRuntime]);
-
-  useEffect(() => {
-    if (!tauriRuntime || !isListening) return;
-    let disposed = false;
-    const unlisteners: UnlistenFn[] = [];
-    const setup = async () => {
-      const unlistenFinal = await listen<string>('speech-final', (event) => {
-        if (disposed) return;
-        commitSpeechText(event.payload, true);
-      });
-      unlisteners.push(unlistenFinal);
-
-      const unlistenStopped = await listen('speech-stopped', () => {
-        if (disposed) return;
-        setIsListening(false);
-      });
-      unlisteners.push(unlistenStopped);
-    };
-    void setup();
-
-    return () => {
-      disposed = true;
-      unlisteners.forEach((fn) => {
-        try {
-          fn();
-        } catch {
-          // ignore
-        }
-      });
-    };
-  }, [commitSpeechText, isListening, tauriRuntime]);
+  }, [stopDesktopRecording, stopWebSpeech, tauriRuntime]);
 
   const handleFolderChange = async (folderIdValue: string) => {
     if (!note) return;
@@ -838,6 +939,9 @@ export const NoteEditor = forwardRef<NoteEditorHandle, NoteEditorProps>(function
           </div>
         </div>
       </div>
+      {tauriRuntime && isListening && speechInterimText && (
+        <div className="speech-interim">{speechInterimText}</div>
+      )}
       <div className="editor-content-container" style={{ display: 'flex', flex: 1, overflow: 'hidden' }}>
         <div className="editor-content" style={{ flex: 1, overflow: 'auto' }}><EditorContent editor={editor} /></div>
         {summaryHistoryOpen && (
